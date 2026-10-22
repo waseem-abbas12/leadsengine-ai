@@ -2,7 +2,13 @@ import re
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
 from typing import Dict, Set, Optional
-from curl_cffi import requests
+
+try:
+    from curl_cffi import requests as curl_requests
+except ImportError:
+    curl_requests = None
+
+import httpx
 
 EMAIL_REGEX = re.compile(r'[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+')
 PHONE_REGEX = re.compile(r'(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})')
@@ -52,6 +58,26 @@ class WebsiteHunter:
                 return name
         return None
 
+    def _fetch_page(self, url: str) -> Optional[str]:
+        if curl_requests:
+            try:
+                r = curl_requests.get(url, impersonate="chrome120", timeout=self.timeout, verify=False)
+                if r.status_code == 200:
+                    return r.text
+            except Exception:
+                pass
+        
+        # Standard HTTPX fallback (runs anywhere on Vercel)
+        try:
+            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
+            with httpx.Client(headers=headers, timeout=float(self.timeout), follow_redirects=True, verify=False) as client:
+                resp = client.get(url)
+                if resp.status_code == 200:
+                    return resp.text
+        except Exception:
+            pass
+        return None
+
     async def crawl_site(self, website_url: str) -> Dict:
         if not website_url.startswith("http"):
             website_url = "https://" + website_url
@@ -75,55 +101,42 @@ class WebsiteHunter:
         all_phones: Set[str] = set()
 
         for u in pages_to_visit[:self.max_pages]:
-            try:
-                # Use curl_cffi with realistic browser impersonation
-                r = requests.get(u, impersonate="chrome120", timeout=self.timeout, verify=False)
-                if r.status_code != 200:
-                    continue
-
-                soup = BeautifulSoup(r.text, 'html.parser')
-                page_text = soup.get_text(separator=' ')
-
-                # Grab Title from homepage
-                if not result["title"] and soup.title and soup.title.string:
-                    result["title"] = soup.title.string.strip()
-
-                # Mailto links
-                for mailto in soup.select('a[href^="mailto:"]'):
-                    href = mailto.get('href', '').replace('mailto:', '').split('?')[0].strip()
-                    if href:
-                        all_emails.add(href.lower())
-
-                # Regex Emails
-                all_emails.update(self.clean_emails(page_text))
-
-                # Phones
-                phones = PHONE_REGEX.findall(page_text)
-                for p in phones:
-                    all_phones.add(f"({p[0]}) {p[1]}-{p[2]}")
-
-                # Socials
-                soc = self.extract_socials(soup)
-                for k, v in soc.items():
-                    if v and not result["socials"][k]:
-                        result["socials"][k] = v
-
-                # Founder
-                if not result["founder_name"]:
-                    f_name = self.extract_founder(page_text)
-                    if f_name:
-                        result["founder_name"] = f_name
-
-                # If found primary email, can stop early
-                if all_emails:
-                    break
-
-            except Exception:
+            html_text = self._fetch_page(u)
+            if not html_text:
                 continue
+
+            soup = BeautifulSoup(html_text, 'html.parser')
+            page_text = soup.get_text(separator=' ')
+
+            if not result["title"] and soup.title and soup.title.string:
+                result["title"] = soup.title.string.strip()
+
+            for mailto in soup.select('a[href^="mailto:"]'):
+                href = mailto.get('href', '').replace('mailto:', '').split('?')[0].strip()
+                if href:
+                    all_emails.add(href.lower())
+
+            all_emails.update(self.clean_emails(page_text))
+
+            phones = PHONE_REGEX.findall(page_text)
+            for p in phones:
+                all_phones.add(f"({p[0]}) {p[1]}-{p[2]}")
+
+            soc = self.extract_socials(soup)
+            for k, v in soc.items():
+                if v and not result["socials"][k]:
+                    result["socials"][k] = v
+
+            if not result["founder_name"]:
+                f_name = self.extract_founder(page_text)
+                if f_name:
+                    result["founder_name"] = f_name
+
+            if all_emails:
+                break
 
         result["emails"] = list(all_emails)
         if result["emails"]:
-            # Prioritize contact@, info@, hello@
             def email_rank(em):
                 if any(x in em for x in ['contact', 'info', 'hello', 'sales', 'support', 'office']):
                     return 0

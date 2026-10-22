@@ -14,3 +14,5 @@ data/*.sqlite3
 scratch*
 yt_initial_data.json
 *.log
+
+.vercel

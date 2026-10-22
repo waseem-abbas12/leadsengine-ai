@@ -4,7 +4,11 @@ import urllib.parse
 from typing import List, Dict, Callable, Optional
 from bs4 import BeautifulSoup
 import httpx
-from playwright.async_api import async_playwright
+
+try:
+    from playwright.async_api import async_playwright
+except ImportError:
+    async_playwright = None
 
 AGGREGATOR_DOMAINS = [
     'webmd.com', 'healthgrades.com', 'opencare.com', 'yelp.com',
@@ -19,6 +23,9 @@ class GoogleMapsScraper:
         self.headless = headless
 
     async def _scrape_via_playwright(self, query: str, max_results: int) -> List[Dict]:
+        if not async_playwright:
+            return []
+
         results: List[Dict] = []
         search_url = f"https://www.google.com/maps/search/{urllib.parse.quote(query)}"
 
@@ -122,7 +129,6 @@ class GoogleMapsScraper:
         headers = {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
-        # Add exclusion keywords to get direct websites
         clean_query = f"{query} contact"
         url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(clean_query)}"
 
@@ -184,19 +190,19 @@ class GoogleMapsScraper:
         max_results: int = 10,
         on_progress: Optional[Callable[[Dict], None]] = None
     ) -> List[Dict]:
-        try:
-            leads = await self._scrape_via_playwright(query, max_results)
-            if leads and len(leads) >= 2:
-                # If playwright leads missed websites, augment with direct web search
-                for l in leads:
-                    if not l.get("website"):
-                        direct = await self._scrape_via_duckduckgo(f"{l['name']} official website", 1)
-                        if direct:
-                            l["website"] = direct[0]["website"]
-                            if not l.get("phone") and direct[0].get("phone"):
-                                l["phone"] = direct[0]["phone"]
-                return leads
-        except Exception:
-            pass
+        if async_playwright:
+            try:
+                leads = await self._scrape_via_playwright(query, max_results)
+                if leads and len(leads) >= 2:
+                    for l in leads:
+                        if not l.get("website"):
+                            direct = await self._scrape_via_duckduckgo(f"{l['name']} official website", 1)
+                            if direct:
+                                l["website"] = direct[0]["website"]
+                                if not l.get("phone") and direct[0].get("phone"):
+                                    l["phone"] = direct[0]["phone"]
+                    return leads
+            except Exception:
+                pass
 
         return await self._scrape_via_duckduckgo(query, max_results)
