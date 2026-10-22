@@ -1,0 +1,482 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>LeadsEngine AI - Client-Closing Engine</title>
+  <!-- Tailwind CSS CDN -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- FontAwesome -->
+  <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css">
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          colors: {
+            brand: {
+              purple: '#7c4dff',
+              purpleHover: '#6a3be8',
+              accent: '#ffb800',
+              darkBg: '#090b10',
+              cardBg: '#111420',
+              border: '#23293e'
+            }
+          }
+        }
+      }
+    }
+  </script>
+  <style>
+    body { background-color: #090b10; color: #f3f4f6; font-family: system-ui, -apple-system, sans-serif; }
+    .glow-btn {
+      background: linear-gradient(135deg, #7c4dff 0%, #a855f7 100%);
+      box-shadow: 0 4px 20px rgba(124, 77, 255, 0.4);
+      transition: all 0.3s ease;
+    }
+    .glow-btn:hover {
+      box-shadow: 0 6px 30px rgba(124, 77, 255, 0.6);
+      transform: translateY(-1px);
+    }
+    .custom-scroll::-webkit-scrollbar { width: 6px; height: 6px; }
+    .custom-scroll::-webkit-scrollbar-track { background: #111420; }
+    .custom-scroll::-webkit-scrollbar-thumb { background: #2a314d; border-radius: 4px; }
+  </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+  <!-- Top Header Navigation -->
+  <header class="border-b border-brand-border bg-brand-cardBg/80 backdrop-blur sticky top-0 z-50">
+    <div class="max-w-7xl mx-auto px-4 sm:px-6 lg:px-8 h-16 flex items-center justify-between">
+      <div class="flex items-center gap-3">
+        <div class="w-10 h-10 rounded-xl bg-gradient-to-tr from-brand-purple to-purple-400 flex items-center justify-center shadow-lg shadow-purple-500/30">
+          <i class="fa-solid fa-bolt text-white text-lg"></i>
+        </div>
+        <div>
+          <span class="text-xl font-extrabold tracking-tight bg-gradient-to-r from-white via-gray-200 to-purple-300 bg-clip-text text-transparent">
+            LeadsEngine<span class="text-brand-purple">.ai</span>
+          </span>
+          <span class="ml-2 text-xs font-semibold px-2 py-0.5 rounded-full bg-brand-accent/10 text-brand-accent border border-brand-accent/20">
+            Free Engine Mode
+          </span>
+        </div>
+      </div>
+
+      <div class="flex items-center gap-4">
+        <button onclick="openCampaignModal()" class="flex items-center gap-2 px-4 py-2 rounded-lg bg-brand-purple/20 text-purple-300 border border-brand-purple/40 hover:bg-brand-purple/30 text-sm font-semibold transition">
+          <i class="fa-solid fa-paper-plane"></i> Launch Outreach
+        </button>
+        <div class="flex items-center gap-2 border border-brand-border px-3 py-1.5 rounded-lg bg-black/40 text-xs">
+          <span class="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
+          <span class="text-gray-300">Ready to Hunt</span>
+        </div>
+      </div>
+    </div>
+  </header>
+
+  <main class="flex-1 max-w-7xl w-full mx-auto px-4 sm:px-6 lg:px-8 py-8 space-y-8">
+
+    <!-- Hero / AI Prompt Box -->
+    <div class="relative overflow-hidden rounded-2xl border border-brand-border bg-gradient-to-b from-brand-cardBg to-[#0d101a] p-6 sm:p-8 shadow-2xl">
+      <div class="absolute -top-24 -right-24 w-72 h-72 bg-brand-purple/15 rounded-full blur-3xl pointer-events-none"></div>
+      
+      <div class="max-w-3xl">
+        <div class="inline-flex items-center gap-2 px-3 py-1 rounded-full bg-brand-accent/10 border border-brand-accent/25 text-brand-accent text-xs font-bold uppercase tracking-wider mb-3">
+          <i class="fa-solid fa-fire"></i> 100% Free AI Sales Hunter
+        </div>
+        <h1 class="text-3xl sm:text-4xl font-extrabold text-white tracking-tight leading-tight">
+          Find Decision-Makers & <br><span class="text-transparent bg-clip-text bg-gradient-to-r from-purple-400 to-brand-accent">Close Clients in Record Time</span>
+        </h1>
+        <p class="mt-2 text-gray-400 text-sm sm:text-base">
+          Type your target market in plain English. The engine finds businesses, crawls their sites, extracts verified emails, phones, socials, and writes personalized pitch hooks.
+        </p>
+
+        <!-- Search Prompt Input -->
+        <div class="mt-6 flex flex-col sm:flex-row gap-3">
+          <div class="relative flex-1">
+            <i class="fa-solid fa-wand-magic-sparkles absolute left-4 top-1/2 -translate-y-1/2 text-purple-400"></i>
+            <input 
+              id="promptInput" 
+              type="text" 
+              placeholder="e.g. Dentists in Miami FL, Roofing companies in Dallas, AI Agencies in London..." 
+              class="w-full pl-11 pr-4 py-3.5 rounded-xl bg-black/50 border border-brand-border focus:border-brand-purple focus:ring-1 focus:ring-brand-purple outline-none text-white placeholder-gray-500 text-sm sm:text-base shadow-inner"
+              onkeydown="if(event.key==='Enter') startEngine()"
+            />
+          </div>
+          <button 
+            id="startBtn"
+            onclick="startEngine()" 
+            class="glow-btn px-7 py-3.5 rounded-xl font-bold text-white flex items-center justify-center gap-2 shrink-0 text-sm sm:text-base cursor-pointer">
+            <span>Start the Engine</span>
+            <i class="fa-solid fa-arrow-right"></i>
+          </button>
+        </div>
+
+        <!-- Quick Prompts Badges -->
+        <div class="mt-4 flex flex-wrap items-center gap-2 text-xs">
+          <span class="text-gray-500">Quick Prompts:</span>
+          <button onclick="setPrompt('Roofing contractors in Dallas Texas')" class="px-2.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition">🏠 Roofers in Dallas</button>
+          <button onclick="setPrompt('Dental clinics in Chicago IL')" class="px-2.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition">🦷 Dentists in Chicago</button>
+          <button onclick="setPrompt('Digital marketing agencies in London')" class="px-2.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition">🚀 Agencies in London</button>
+          <button onclick="setPrompt('Solar installation companies in Phoenix AZ')" class="px-2.5 py-1 rounded-md bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 transition">☀️ Solar in Phoenix</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Stats Counter Section -->
+    <div class="grid grid-cols-2 sm:grid-cols-4 gap-4">
+      <div class="p-5 rounded-xl bg-brand-cardBg border border-brand-border">
+        <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+          <span>Leads Generated</span>
+          <i class="fa-solid fa-users text-purple-400"></i>
+        </div>
+        <div id="statTotalLeads" class="text-2xl font-black text-white mt-2">0</div>
+        <div class="text-[11px] text-emerald-400 mt-1 flex items-center gap-1">
+          <i class="fa-solid fa-arrow-trend-up"></i> Real-time DB
+        </div>
+      </div>
+
+      <div class="p-5 rounded-xl bg-brand-cardBg border border-brand-border">
+        <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+          <span>Verified Emails</span>
+          <i class="fa-solid fa-envelope-circle-check text-brand-accent"></i>
+        </div>
+        <div id="statEmailsFound" class="text-2xl font-black text-white mt-2">0</div>
+        <div class="text-[11px] text-gray-400 mt-1">SMTP Verified</div>
+      </div>
+
+      <div class="p-5 rounded-xl bg-brand-cardBg border border-brand-border">
+        <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+          <span>Campaigns Sent</span>
+          <i class="fa-solid fa-paper-plane text-blue-400"></i>
+        </div>
+        <div id="statEmailsSent" class="text-2xl font-black text-white mt-2">0</div>
+        <div class="text-[11px] text-gray-400 mt-1">Automated Outreach</div>
+      </div>
+
+      <div class="p-5 rounded-xl bg-brand-cardBg border border-brand-border">
+        <div class="flex items-center justify-between text-gray-400 text-xs font-medium">
+          <span>Open Rate</span>
+          <i class="fa-solid fa-eye text-green-400"></i>
+        </div>
+        <div id="statOpenRate" class="text-2xl font-black text-emerald-400 mt-2">0.0%</div>
+        <div class="text-[11px] text-gray-400 mt-1">Layer-2 Pixel Tracking</div>
+      </div>
+    </div>
+
+    <!-- Leads Table & Results -->
+    <div class="rounded-xl border border-brand-border bg-brand-cardBg overflow-hidden">
+      <!-- Table Header & Actions -->
+      <div class="p-4 sm:p-5 border-b border-brand-border flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4">
+        <div>
+          <h2 class="text-lg font-bold text-white flex items-center gap-2">
+            <span>Ready-to-Buy Prospects</span>
+            <span id="leadCountBadge" class="text-xs px-2 py-0.5 rounded-full bg-purple-500/20 text-purple-300 font-semibold border border-purple-500/30">0 leads</span>
+          </h2>
+          <p class="text-xs text-gray-400 mt-0.5">Scraped, enriched with emails, phones, socials, and AI scored</p>
+        </div>
+
+        <!-- Export Buttons -->
+        <div class="flex items-center gap-2 w-full sm:w-auto">
+          <a href="/api/leads/export?format=csv" class="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 text-xs font-semibold flex items-center justify-center gap-2 transition">
+            <i class="fa-solid fa-file-csv text-emerald-400"></i> Export CSV
+          </a>
+          <a href="/api/leads/export?format=xlsx" class="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 text-xs font-semibold flex items-center justify-center gap-2 transition">
+            <i class="fa-solid fa-file-excel text-green-400"></i> Export Excel
+          </a>
+        </div>
+      </div>
+
+      <!-- Live Loading State -->
+      <div id="loadingState" class="hidden py-16 text-center">
+        <div class="inline-block w-12 h-12 border-4 border-brand-purple border-t-transparent rounded-full animate-spin"></div>
+        <h3 class="mt-4 text-base font-bold text-white">Engine is Scraping & Hunting...</h3>
+        <p class="text-xs text-gray-400 max-w-sm mx-auto mt-1">Navigating Google Maps, crawling company websites for contact details, and testing mail server handshakes...</p>
+      </div>
+
+      <!-- Table Container -->
+      <div id="tableContainer" class="overflow-x-auto custom-scroll">
+        <table class="w-full text-left border-collapse">
+          <thead>
+            <tr class="border-b border-brand-border/60 bg-black/30 text-[11px] uppercase tracking-wider text-gray-400">
+              <th class="py-3 px-4">Business & Contact</th>
+              <th class="py-3 px-4">Verified Email</th>
+              <th class="py-3 px-4">Phone & Location</th>
+              <th class="py-3 px-4">Social Channels</th>
+              <th class="py-3 px-4">AI Score</th>
+              <th class="py-3 px-4">Personalized Pitch Hook</th>
+              <th class="py-3 px-4 text-right">Actions</th>
+            </tr>
+          </thead>
+          <tbody id="leadsTableBody" class="divide-y divide-brand-border/40 text-sm">
+            <tr>
+              <td colspan="7" class="py-12 text-center text-gray-500 text-sm">
+                No leads scraped yet. Enter a prompt above to ignite the Engine!
+              </td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+    </div>
+  </main>
+
+  <!-- Cold Outreach Modal -->
+  <div id="campaignModal" class="hidden fixed inset-0 z-50 bg-black/80 backdrop-blur-sm flex items-center justify-center p-4">
+    <div class="bg-brand-cardBg border border-brand-border rounded-2xl max-w-2xl w-full p-6 shadow-2xl relative">
+      <button onclick="closeCampaignModal()" class="absolute top-4 right-4 text-gray-400 hover:text-white">
+        <i class="fa-solid fa-xmark text-lg"></i>
+      </button>
+
+      <div class="flex items-center gap-2 mb-4">
+        <div class="w-8 h-8 rounded-lg bg-brand-purple/20 text-brand-purple flex items-center justify-center">
+          <i class="fa-solid fa-paper-plane text-sm"></i>
+        </div>
+        <div>
+          <h3 class="text-lg font-bold text-white">Launch Outreach Campaign</h3>
+          <p class="text-xs text-gray-400">Includes 3-Layer Email Tracking (Opens, Clicks & MX Handshake)</p>
+        </div>
+      </div>
+
+      <div class="space-y-4">
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Subject Line</label>
+          <input id="emailSubject" type="text" value="Quick question regarding {{company}}" class="w-full px-3.5 py-2.5 rounded-lg bg-black/50 border border-brand-border text-white text-sm focus:border-brand-purple outline-none">
+        </div>
+
+        <div>
+          <label class="block text-xs font-semibold text-gray-300 mb-1">Email Body (Supports HTML & Dynamic Tags)</label>
+          <textarea id="emailBody" rows="6" class="w-full px-3.5 py-2.5 rounded-lg bg-black/50 border border-brand-border text-white text-sm focus:border-brand-purple outline-none custom-scroll">Hi {{name}},
+
+{{pitch_hook}}
+
+We help businesses like {{company}} scale their customer pipeline on autopilot. Would you be open to a 5-minute chat this Thursday?
+
+Best regards,
+Sales Engine Team</textarea>
+          <div class="mt-2 flex flex-wrap gap-1.5 text-[11px]">
+            <span class="text-gray-500">Available Tags:</span>
+            <code class="px-1.5 py-0.5 rounded bg-black/60 text-purple-300">{{name}}</code>
+            <code class="px-1.5 py-0.5 rounded bg-black/60 text-purple-300">{{company}}</code>
+            <code class="px-1.5 py-0.5 rounded bg-black/60 text-purple-300">{{phone}}</code>
+            <code class="px-1.5 py-0.5 rounded bg-black/60 text-purple-300">{{website}}</code>
+            <code class="px-1.5 py-0.5 rounded bg-black/60 text-purple-300">{{pitch_hook}}</code>
+          </div>
+        </div>
+
+        <div class="p-3.5 rounded-lg bg-black/40 border border-brand-border/60 text-xs text-gray-400 flex items-start gap-2.5">
+          <i class="fa-solid fa-shield-halved text-brand-accent mt-0.5"></i>
+          <div>
+            <span class="font-semibold text-gray-300">3-Layer Tracking Active:</span>
+            Each outgoing email includes a silent 1x1 transparent tracking pixel for Opens and wrapped URLs for Clicks.
+          </div>
+        </div>
+
+        <div class="flex items-center justify-end gap-3 pt-2">
+          <button onclick="closeCampaignModal()" class="px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 text-sm font-semibold transition">Cancel</button>
+          <button id="sendCampaignBtn" onclick="dispatchCampaign()" class="glow-btn px-5 py-2 rounded-lg text-white font-bold text-sm flex items-center gap-2">
+            <span>Send to All Verified Leads</span>
+            <i class="fa-solid fa-paper-plane"></i>
+          </button>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    function setPrompt(text) {
+      document.getElementById('promptInput').value = text;
+      document.getElementById('promptInput').focus();
+    }
+
+    async function loadStats() {
+      try {
+        const res = await fetch('/api/stats');
+        const data = await res.json();
+        document.getElementById('statTotalLeads').innerText = data.total_leads || 0;
+        document.getElementById('statEmailsFound').innerText = data.emails_found || 0;
+        document.getElementById('statEmailsSent').innerText = data.emails_sent || 0;
+        document.getElementById('statOpenRate').innerText = (data.open_rate || 0) + '%';
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    async function loadLeads() {
+      try {
+        const res = await fetch('/api/leads');
+        const leads = await res.json();
+        renderTable(leads);
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
+    function renderTable(leads) {
+      const tbody = document.getElementById('leadsTableBody');
+      document.getElementById('leadCountBadge').innerText = `${leads.length} leads`;
+
+      if (!leads || leads.length === 0) {
+        tbody.innerHTML = `<tr><td colspan="7" class="py-12 text-center text-gray-500 text-sm">No leads available yet. Enter a prompt to start!</td></tr>`;
+        return;
+      }
+
+      tbody.innerHTML = leads.map(l => {
+        const scoreColor = l.ai_score >= 70 ? 'text-emerald-400 bg-emerald-500/10 border-emerald-500/30' : 
+                           l.ai_score >= 50 ? 'text-brand-accent bg-brand-accent/10 border-brand-accent/30' : 
+                           'text-gray-400 bg-white/5 border-white/10';
+
+        const emailBadge = l.email_status === 'VERIFIED' ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 border border-emerald-500/40">Verified</span>' :
+                           l.email_status === 'VERIFIED_MX' ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-blue-500/20 text-blue-300 border border-blue-500/40">MX Valid</span>' :
+                           l.email_status === 'RISKY' ? '<span class="text-[10px] px-1.5 py-0.5 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">Risky</span>' :
+                           '<span class="text-[10px] px-1.5 py-0.5 rounded bg-gray-500/20 text-gray-400">None</span>';
+
+        const socials = l.socials || {};
+        const linkedin = socials.linkedin ? `<a href="${socials.linkedin}" target="_blank" class="text-blue-400 hover:text-blue-300"><i class="fa-brands fa-linkedin text-sm"></i></a>` : '';
+        const instagram = socials.instagram ? `<a href="${socials.instagram}" target="_blank" class="text-pink-400 hover:text-pink-300"><i class="fa-brands fa-instagram text-sm"></i></a>` : '';
+        const facebook = socials.facebook ? `<a href="${socials.facebook}" target="_blank" class="text-blue-500 hover:text-blue-400"><i class="fa-brands fa-facebook text-sm"></i></a>` : '';
+        const twitter = socials.twitter ? `<a href="${socials.twitter}" target="_blank" class="text-gray-300 hover:text-white"><i class="fa-brands fa-x-twitter text-sm"></i></a>` : '';
+        const hasSocials = linkedin || instagram || facebook || twitter;
+
+        return `
+          <tr class="hover:bg-white/[0.02] transition">
+            <td class="py-3 px-4">
+              <div class="font-bold text-white">${l.name || 'Unknown'}</div>
+              <div class="text-xs text-gray-400 flex items-center gap-1.5 mt-0.5">
+                ${l.founder_name ? `<span class="text-purple-300 font-medium"><i class="fa-solid fa-user-tie text-[10px]"></i> ${l.founder_name}</span> · ` : ''}
+                <span>${l.category || 'Business'}</span>
+              </div>
+              ${l.website ? `<a href="${l.website}" target="_blank" class="text-[11px] text-purple-400 hover:underline flex items-center gap-1 mt-0.5"><i class="fa-solid fa-arrow-up-right-from-square text-[9px]"></i> ${l.website.replace('https://', '').replace('http://', '').slice(0, 24)}</a>` : ''}
+            </td>
+            <td class="py-3 px-4">
+              ${l.email ? `
+                <div class="font-medium text-white text-xs">${l.email}</div>
+                <div class="mt-1">${emailBadge}</div>
+              ` : '<span class="text-xs text-gray-500">Not found</span>'}
+            </td>
+            <td class="py-3 px-4">
+              ${l.phone ? `<div class="text-xs text-gray-200 font-mono"><i class="fa-solid fa-phone text-[10px] text-gray-400 mr-1"></i>${l.phone}</div>` : '<span class="text-xs text-gray-500">—</span>'}
+              <div class="text-xs text-gray-400 flex items-center gap-1 mt-1">
+                <i class="fa-solid fa-star text-amber-400 text-[10px]"></i>
+                <span class="font-semibold text-gray-300">${l.rating || 'N/A'}</span>
+                <span class="text-[11px]">(${l.reviews || 0})</span>
+              </div>
+            </td>
+            <td class="py-3 px-4">
+              <div class="flex items-center gap-2">
+                ${hasSocials ? (linkedin + instagram + facebook + twitter) : '<span class="text-xs text-gray-600">—</span>'}
+              </div>
+            </td>
+            <td class="py-3 px-4">
+              <span class="px-2 py-1 rounded-md text-xs font-black border ${scoreColor}">
+                ${l.ai_score}/100
+              </span>
+            </td>
+            <td class="py-3 px-4 max-w-xs">
+              <p class="text-xs text-gray-300 line-clamp-2" title="${l.pitch_hook || ''}">
+                ${l.pitch_hook || 'No hook generated.'}
+              </p>
+            </td>
+            <td class="py-3 px-4 text-right">
+              ${l.email ? `
+                <button onclick="quickEmail('${l.email}', '${l.name}')" class="px-2.5 py-1 rounded bg-brand-purple/20 text-purple-300 hover:bg-brand-purple hover:text-white border border-brand-purple/40 text-xs font-medium transition" title="Send cold email">
+                  <i class="fa-solid fa-paper-plane text-[10px]"></i>
+                </button>
+              ` : ''}
+            </td>
+          </tr>
+        `;
+      }).join('');
+    }
+
+    async function startEngine() {
+      const input = document.getElementById('promptInput');
+      const prompt = input.value.trim();
+      if (!prompt) {
+        alert('Please enter a target market prompt (e.g. Dentists in Miami FL)');
+        return;
+      }
+
+      const startBtn = document.getElementById('startBtn');
+      const loadingState = document.getElementById('loadingState');
+      const tableContainer = document.getElementById('tableContainer');
+
+      startBtn.disabled = true;
+      startBtn.innerHTML = `<i class="fa-solid fa-spinner animate-spin"></i> Running Engine...`;
+      loadingState.classList.remove('hidden');
+      tableContainer.classList.add('opacity-40');
+
+      try {
+        const res = await fetch('/api/leads/search', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ prompt: prompt, max_results: 10 })
+        });
+        const data = await res.json();
+        if (data.status === 'success') {
+          await loadLeads();
+          await loadStats();
+        } else {
+          alert('Scraping completed with notes: ' + (data.detail || 'Done'));
+        }
+      } catch (err) {
+        alert('Error scraping leads: ' + err.message);
+      } finally {
+        startBtn.disabled = false;
+        startBtn.innerHTML = `<span>Start the Engine</span> <i class="fa-solid fa-arrow-right"></i>`;
+        loadingState.classList.add('hidden');
+        tableContainer.classList.remove('opacity-40');
+      }
+    }
+
+    function openCampaignModal() {
+      document.getElementById('campaignModal').classList.remove('hidden');
+    }
+
+    function closeCampaignModal() {
+      document.getElementById('campaignModal').classList.add('hidden');
+    }
+
+    function quickEmail(email, company) {
+      document.getElementById('emailSubject').value = `Quick question regarding ${company}`;
+      openCampaignModal();
+    }
+
+    async function dispatchCampaign() {
+      const btn = document.getElementById('sendCampaignBtn');
+      const subject = document.getElementById('emailSubject').value.trim();
+      const body = document.getElementById('emailBody').value.trim();
+
+      if (!subject || !body) {
+        alert('Subject and Body cannot be empty');
+        return;
+      }
+
+      btn.disabled = true;
+      btn.innerHTML = `<i class="fa-solid fa-spinner animate-spin"></i> Dispatching...`;
+
+      try {
+        const res = await fetch('/api/campaigns/send', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ subject: subject, body: body })
+        });
+        const data = await res.json();
+        alert(`Campaign complete! Sent: ${data.sent} of ${data.total} leads.`);
+        closeCampaignModal();
+        await loadStats();
+      } catch (e) {
+        alert('Failed to send campaign: ' + e.message);
+      } finally {
+        btn.disabled = false;
+        btn.innerHTML = `<span>Send to All Verified Leads</span> <i class="fa-solid fa-paper-plane"></i>`;
+      }
+    }
+
+    // Initialize on load
+    document.addEventListener('DOMContentLoaded', () => {
+      loadStats();
+      loadLeads();
+    });
+  </script>
+</body>
+</html>

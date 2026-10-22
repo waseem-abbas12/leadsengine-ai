@@ -1,0 +1,16 @@
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.env
+data/*.db
+data/*.sqlite3
+
+# Vercel
+.vercel/
+
+# Temporary / Scratch
+scratch*
+yt_initial_data.json
+*.log
