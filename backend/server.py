@@ -39,10 +39,13 @@ except Exception:
     pass
 
 frontend_dir = BASE_DIR / "frontend"
-static_dir = frontend_dir / "static"
-static_dir.mkdir(exist_ok=True, parents=True)
-if static_dir.exists():
-    app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+try:
+    static_dir = frontend_dir / "static"
+    static_dir.mkdir(exist_ok=True, parents=True)
+    if static_dir.exists():
+        app.mount("/static", StaticFiles(directory=str(static_dir)), name="static")
+except Exception:
+    pass
 
 enricher = AIEnricher()
 hunter = WebsiteHunter()

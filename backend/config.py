@@ -23,5 +23,13 @@ if os.getenv("VERCEL"):
 else:
     DATA_DIR = BASE_DIR / "data"
 
-DATA_DIR.mkdir(exist_ok=True, parents=True)
+try:
+    DATA_DIR.mkdir(exist_ok=True, parents=True)
+except Exception:
+    DATA_DIR = Path("/tmp")
+    try:
+        DATA_DIR.mkdir(exist_ok=True, parents=True)
+    except Exception:
+        pass
+
 DB_PATH = DATA_DIR / "leadsengine.db"
