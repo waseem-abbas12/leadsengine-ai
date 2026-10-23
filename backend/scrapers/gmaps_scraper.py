@@ -89,52 +89,13 @@ def extract_clean_phone(txt: str) -> str:
                 return cand
     return ""
 
-def generate_expanded_queries(niche: str, location: str = "", max_queries: int = 20) -> List[str]:
-    n = niche.strip().lower()
-    loc = location.strip()
-    loc_lower = loc.lower()
+from backend.scrapers.keyword_expander import generate_deep_industry_queries
 
-    queries = [f"{niche} in {location}" if location else niche]
-
-    if loc:
-        queries.extend([
-            f"best {niche} in {loc}",
-            f"{niche} agency in {loc}",
-            f"top {niche} in {loc}",
-            f"{niche} services in {loc}",
-            f"{niche} near {loc}"
-        ])
-
-    synonyms = []
-    for key, syns in NICHE_SYNONYMS.items():
-        if key in n:
-            synonyms = syns
-            break
-    
-    if synonyms:
-        for s in synonyms:
-            queries.append(f"{s} in {loc}" if loc else s)
-
-    # Add Sub-areas for localized market sweeping
-    for city, areas in PAKISTAN_AREAS if 'PAKISTAN_AREAS' in globals() else PAKISTAN_SUB_AREAS.items():
-        if city in loc_lower:
-            for area in areas:
-                queries.append(f"{niche} in {area} {loc}")
-                if len(queries) >= max_queries + 6:
-                    break
-            break
-
-    seen = set()
-    final_queries = []
-    for q in queries:
-        cleaned = " ".join(q.split())
-        if cleaned.lower() not in seen:
-            seen.add(cleaned.lower())
-            final_queries.append(cleaned)
-            if len(final_queries) >= max_queries:
-                break
-
-    return final_queries
+def generate_expanded_queries(niche: str, location: str = "", max_queries: int = 50) -> List[str]:
+    """
+    Calls the comprehensive Industry Taxonomy & Sub-Area generator to produce all micro-keywords.
+    """
+    return generate_deep_industry_queries(niche=niche, location=location, max_queries=max_queries)
 
 
 class GoogleMapsScraper:

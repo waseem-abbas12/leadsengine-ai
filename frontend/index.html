@@ -294,10 +294,11 @@
           <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
             <div class="flex items-center bg-black/40 border border-brand-border rounded-lg p-0.5 text-xs">
               <button onclick="applyFilter('all')" data-filter="all" class="filter-btn px-2.5 py-1 rounded-md bg-brand-purple text-white font-medium transition">All</button>
-              <button onclick="applyFilter('linkedin')" data-filter="linkedin" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">LinkedIn</button>
-              <button onclick="applyFilter('email')" data-filter="email" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">With Email</button>
+              <button onclick="applyFilter('needs_website')" data-filter="needs_website" class="filter-btn px-2.5 py-1 rounded-md text-amber-300 hover:text-white transition">Needs Website</button>
+              <button onclick="applyFilter('hot_intent')" data-filter="hot_intent" class="filter-btn px-2.5 py-1 rounded-md text-emerald-400 hover:text-white transition">Hot Buyer</button>
               <button onclick="applyFilter('phone')" data-filter="phone" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">With Phone</button>
-              <button onclick="applyFilter('high_score')" data-filter="high_score" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">Score 70+</button>
+              <button onclick="applyFilter('email')" data-filter="email" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">With Email</button>
+              <button onclick="applyFilter('linkedin')" data-filter="linkedin" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">LinkedIn</button>
             </div>
             <div class="h-4 w-px bg-brand-border hidden sm:block"></div>
             <button onclick="copyAllLeadsAsCsv()" class="px-2.5 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 text-xs font-semibold flex items-center gap-1.5 transition" title="Copy all leads to clipboard as CSV">
@@ -687,8 +688,10 @@ Sales Engine Team</textarea>
         filtered = allFetchedLeads.filter(l => l.email);
       } else if (filterType === 'phone') {
         filtered = allFetchedLeads.filter(l => l.phone);
-      } else if (filterType === 'high_score') {
-        filtered = allFetchedLeads.filter(l => (l.ai_score || 0) >= 70);
+      } else if (filterType === 'needs_website') {
+        filtered = allFetchedLeads.filter(l => !l.website || (l.service_tags && l.service_tags.includes('Needs Website')));
+      } else if (filterType === 'hot_intent') {
+        filtered = allFetchedLeads.filter(l => l.readiness_level === 'High' || (l.readiness_score || 0) >= 80);
       }
 
       const searchVal = document.getElementById('tableSearchInput').value.trim().toLowerCase();
@@ -789,8 +792,16 @@ Sales Engine Team</textarea>
               </span>
             </td>
             <td class="py-3 px-4 max-w-xs">
-              <p class="text-xs text-gray-300 line-clamp-2 cursor-pointer hover:text-white" onclick="openProspectModal(${l.id})" title="${l.pitch_hook || ''}">
-                ${l.pitch_hook || 'No hook generated.'}
+              ${l.service_fit ? `
+                <div class="mb-1 flex items-center gap-1.5 flex-wrap">
+                  <span class="text-[10px] font-bold px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300 border border-emerald-500/30 flex items-center gap-1">
+                    <i class="fa-solid fa-bullseye text-[9px]"></i>${l.service_fit}
+                  </span>
+                  ${l.readiness_level === 'High' ? '<span class="text-[9px] font-black px-1.5 py-0.2 rounded bg-amber-500/20 text-amber-300 border border-amber-500/40">HOT BUYER</span>' : ''}
+                </div>
+              ` : ''}
+              <p class="text-xs text-gray-300 line-clamp-2 cursor-pointer hover:text-white" onclick="openProspectModal(${l.id})" title="${l.pitch_hook || l.service_gap || ''}">
+                ${l.pitch_hook || l.service_gap || 'Ready for direct outreach.'}
               </p>
             </td>
             <td class="py-3 px-4 text-right">

@@ -23,6 +23,7 @@ from backend.scrapers.email_verifier import (
     discover_and_verify_corporate_email
 )
 from backend.ai.enricher import AIEnricher
+from backend.ai.service_fit_analyzer import ServiceFitAnalyzer
 from backend.outreach.tracker import (
     init_db, save_lead, get_all_leads, record_email_open,
     record_email_click, get_stats
@@ -250,6 +251,21 @@ async def start_hunt(req: SearchRequest):
             hunt_state.logs = hunt_state.logs[-500:]
 
     def append_lead(lead_item: dict):
+        # Service Fit & Buyer Intent Analysis
+        try:
+            fit = ServiceFitAnalyzer.analyze(lead_item)
+            lead_item["service_fit"] = fit["primary_service"]
+            lead_item["service_gap"] = fit["service_gap"]
+            lead_item["readiness_level"] = fit["readiness_level"]
+            lead_item["readiness_score"] = fit["readiness_score"]
+            lead_item["service_tags"] = fit["service_tags"]
+        except Exception:
+            lead_item["service_fit"] = "Lead Generation Outreach"
+            lead_item["service_gap"] = "High commercial intent"
+            lead_item["readiness_level"] = "Medium"
+            lead_item["readiness_score"] = 70
+            lead_item["service_tags"] = ["Commercial Lead"]
+
         hunt_state.session_leads.append(lead_item)
         hunt_state.total_scraped = len(hunt_state.session_leads)
         if lead_item.get("phone"):
