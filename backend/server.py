@@ -65,7 +65,8 @@ class SearchRequest(BaseModel):
     role: Optional[str] = "CEO, Founder, Owner, Managing Director"
     seniority: Optional[str] = None  # "c_level", "founder", "vp", "director", "manager"
     location: Optional[str] = ""
-    max_results: int = 10
+    max_results: int = 50
+    use_variations: bool = True
     only_with_email: bool = False
     only_with_phone: bool = False
     only_with_linkedin: bool = False
@@ -224,10 +225,18 @@ async def api_search(req: SearchRequest):
             max_results=req.max_results
         )
     elif req.mode == "maps":
-        raw_leads = await maps_scraper.search_leads(search_query, max_results=req.max_results)
+        raw_leads = await maps_scraper.search_leads(
+            search_query,
+            max_results=req.max_results,
+            use_variations=req.use_variations
+        )
     else:  # Hybrid: both Maps and LinkedIn
         tasks = [
-            maps_scraper.search_leads(search_query, max_results=req.max_results),
+            maps_scraper.search_leads(
+                search_query,
+                max_results=req.max_results,
+                use_variations=req.use_variations
+            ),
             linkedin_hunter.find_decision_makers(
                 niche=niche,
                 location=location,

@@ -1,7 +1,7 @@
 import asyncio
 import re
 import urllib.parse
-from typing import List, Dict, Callable, Optional
+from typing import List, Dict, Callable, Optional, Set
 from bs4 import BeautifulSoup
 import httpx
 
@@ -25,16 +25,121 @@ AGGREGATOR_DOMAINS = [
     'checkatrade.com', 'gumtree.com', 'craigslist.org', 'crunchbase.com'
 ]
 
+PAKISTAN_SUB_AREAS = {
+    "faisalabad": [
+        "D Ground", "Madina Town", "Peoples Colony", "Canal Road",
+        "Kohinoor City", "Citi Housing", "Wapda City", "Gulberg",
+        "Samanabad", "Jinnah Colony", "Susan Road", "Satiana Road", "FDA City"
+    ],
+    "lahore": [
+        "DHA", "Gulberg", "Johar Town", "Bahria Town", "Model Town",
+        "Cantt", "Faisal Town", "Wapda Town", "Mall Road"
+    ],
+    "karachi": [
+        "DHA", "Clifton", "Gulshan-e-Iqbal", "PECHS", "North Nazimabad",
+        "Bahria Town", "Korangi", "Saddar"
+    ],
+    "islamabad": [
+        "F-6", "F-7", "F-8", "F-10", "F-11", "G-11", "Blue Area",
+        "DHA", "Bahria Town", "E-11"
+    ],
+    "rawalpindi": [
+        "Saddar", "Bahria Town", "Chaklala Scheme", "Peshawar Road", "Satellite Town"
+    ]
+}
+
+NICHE_SYNONYMS = {
+    "real estate": [
+        "property dealer", "real estate agency", "property advisors",
+        "real estate consultants", "property consultants", "commercial property"
+    ],
+    "property": [
+        "real estate", "property dealer", "real estate agency", "property consultants"
+    ],
+    "dentist": ["dental clinic", "orthodontist", "dental hospital", "teeth clinic"],
+    "doctor": ["clinic", "hospital", "specialist doctor", "medical center"],
+    "lawyer": ["advocate", "law firm", "legal consultant", "attorney"],
+    "software": ["software house", "IT company", "digital agency", "web development agency"],
+    "car dealer": ["used cars", "car showroom", "auto dealer", "motors"],
+    "restaurant": ["cafe", "fast food", "family restaurant", "hotel & restaurant"]
+}
+
+PHONE_PATTERNS = [
+    r'(\+?92[-.\s]?[0-9]{3}[-.\s]?[0-9]{7})',            # +92 304 1111250
+    r'(03[0-9]{2}[-.\s]?[0-9]{7})',                      # 0301 6044097
+    r'(\+?1[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4})',  # US
+    r'(\+?44[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})', # UK
+    r'(\(?[0-9]{3,4}\)?[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})'   # General landline
+]
+
+def extract_clean_phone(txt: str) -> str:
+    for pat in PHONE_PATTERNS:
+        pm = re.search(pat, txt)
+        if pm:
+            cand = pm.group(1).strip()
+            digits = re.sub(r'\D', '', cand)
+            if 8 <= len(digits) <= 15:
+                return cand
+    return ""
+
+def generate_expanded_queries(niche: str, location: str = "", max_queries: int = 20) -> List[str]:
+    n = niche.strip().lower()
+    loc = location.strip()
+    loc_lower = loc.lower()
+
+    queries = [f"{niche} in {location}" if location else niche]
+
+    if loc:
+        queries.extend([
+            f"best {niche} in {loc}",
+            f"{niche} agency in {loc}",
+            f"top {niche} in {loc}",
+            f"{niche} services in {loc}",
+            f"{niche} near {loc}"
+        ])
+
+    synonyms = []
+    for key, syns in NICHE_SYNONYMS.items():
+        if key in n:
+            synonyms = syns
+            break
+    
+    if synonyms:
+        for s in synonyms:
+            queries.append(f"{s} in {loc}" if loc else s)
+
+    # Add Sub-areas for localized market sweeping
+    for city, areas in PAKISTAN_AREAS if 'PAKISTAN_AREAS' in globals() else PAKISTAN_SUB_AREAS.items():
+        if city in loc_lower:
+            for area in areas:
+                queries.append(f"{niche} in {area} {loc}")
+                if len(queries) >= max_queries + 6:
+                    break
+            break
+
+    seen = set()
+    final_queries = []
+    for q in queries:
+        cleaned = " ".join(q.split())
+        if cleaned.lower() not in seen:
+            seen.add(cleaned.lower())
+            final_queries.append(cleaned)
+            if len(final_queries) >= max_queries:
+                break
+
+    return final_queries
+
+
 class GoogleMapsScraper:
     def __init__(self, headless: bool = True):
         self.headless = headless
 
-    async def _scrape_via_playwright(self, query: str, max_results: int) -> List[Dict]:
+    async def _scrape_multi_queries_playwright(self, queries: List[str], max_results: int) -> List[Dict]:
         if not async_playwright:
             return []
 
-        results: List[Dict] = []
-        search_url = f"https://www.google.com/maps/search/{urllib.parse.quote(query)}"
+        all_results: List[Dict] = []
+        seen_keys: Set[str] = set()
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -48,119 +153,129 @@ class GoogleMapsScraper:
             page = await context.new_page()
 
             try:
-                await page.goto(search_url, wait_until="commit", timeout=15000)
-                await asyncio.sleep(3)
-
-                for btn_text in ["Accept all", "Reject all", "I agree", "Accept"]:
-                    try:
-                        btn = page.locator(f'button:has-text("{btn_text}")')
-                        if await btn.count() > 0:
-                            await btn.first.click(timeout=1000)
-                            await asyncio.sleep(1)
-                            break
-                    except Exception:
-                        pass
-
-                try:
-                    await page.wait_for_selector('div.Nv2PK', timeout=8000)
-                except Exception:
-                    pass
-
-                feed_locator = page.locator('div[role="feed"]')
-                scroll_attempts = min(35, max(4, max_results // 2))
-                for _ in range(scroll_attempts):
-                    current_cards = await page.locator('div.Nv2PK').all()
-                    if len(current_cards) >= max_results:
+                for q_idx, q in enumerate(queries, 1):
+                    if len(all_results) >= max_results:
                         break
-                    if await feed_locator.count() > 0:
-                        await feed_locator.first.evaluate('(el) => el.scrollTop = el.scrollHeight')
-                    else:
-                        await page.mouse.wheel(0, 3000)
-                    await asyncio.sleep(1.0)
 
-                cards = await page.locator('div.Nv2PK').all()
-                seen = set()
-
-                for card in cards[:max_results]:
+                    search_url = f"https://www.google.com/maps/search/{urllib.parse.quote(q)}"
                     try:
-                        name_el = card.locator('.qBF1Pd, .fontHeadlineSmall')
-                        if await name_el.count() == 0:
+                        await page.goto(search_url, wait_until="commit", timeout=18000)
+                        await asyncio.sleep(2.0)
+
+                        # Handle consent buttons once
+                        if q_idx == 1:
+                            for btn_text in ["Accept all", "Reject all", "I agree", "Accept"]:
+                                try:
+                                    btn = page.locator(f'button:has-text("{btn_text}")')
+                                    if await btn.count() > 0:
+                                        await btn.first.click(timeout=1000)
+                                        await asyncio.sleep(0.8)
+                                        break
+                                except Exception:
+                                    pass
+
+                        try:
+                            await page.wait_for_selector('div.Nv2PK', timeout=7000)
+                        except Exception:
                             continue
-                        name = (await name_el.first.inner_text()).strip()
-                        if not name or name in seen:
-                            continue
-                        seen.add(name)
 
-                        rating = "N/A"
-                        reviews = "0"
-                        r_el = card.locator('span.MW4etd')
-                        if await r_el.count() > 0:
-                            rating = (await r_el.first.inner_text()).strip()
-                        rev_el = card.locator('span.UY7F9')
-                        if await rev_el.count() > 0:
-                            reviews = re.sub(r'[^\d]', '', await rev_el.first.inner_text()) or "0"
+                        # Continuous feed scrolling
+                        feed_locator = page.locator('div[role="feed"]')
+                        needed = max_results - len(all_results)
+                        scroll_count = min(15, max(3, needed // 3))
+                        
+                        for _ in range(scroll_count):
+                            cards_check = await page.locator('div.Nv2PK').all()
+                            if len(cards_check) >= needed + 5:
+                                break
+                            if await feed_locator.count() > 0:
+                                await feed_locator.first.evaluate('(el) => el.scrollTop = el.scrollHeight')
+                            else:
+                                await page.mouse.wheel(0, 3000)
+                            await asyncio.sleep(0.9)
 
-                        cat = ""
-                        address = ""
-                        w_elements = await card.locator('.W4Efsd').all()
-                        for w in w_elements:
-                            txt = (await w.inner_text()).strip()
-                            if re.match(r'^\d+(\.\d+)?\([\d,]+\)$', txt):
-                                continue
-                            parts = [p.strip() for p in re.split(r'[·•\n]', txt) if p.strip()]
-                            for p in parts:
-                                if any(term in p for term in ['Opens', 'Closed', 'Open 24', 'AM', 'PM', 'hours', 'Appointment', 'In-store']):
-                                    continue
-                                if re.search(r'\d+\s+[A-Za-z]+', p):
-                                    if not address:
-                                        address = p
-                                elif not cat and len(p) < 40 and not any(p.startswith(x) for x in ['+', '(', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
-                                    cat = p
+                        cards = await page.locator('div.Nv2PK').all()
 
-                        if not cat:
-                            cat = query.split(" in ")[0].strip().capitalize()
-
-                        website = ""
-                        site_links = await card.locator('a[data-value="Website"], a.lcr4fd, a[aria-label*="Website"], a[aria-label*="website"]').all()
-                        for sl in site_links:
-                            h = await sl.get_attribute('href')
-                            if h and h.startswith("http") and "google.com" not in h and "/aclk" not in h:
-                                website = h
+                        for card in cards:
+                            if len(all_results) >= max_results:
                                 break
 
-                        phone = ""
-                        card_text = await card.inner_text()
-                        phone_patterns = [
-                            r'(\+?92[-.\s]?[0-9]{3}[-.\s]?[0-9]{7})',            # +92 304 1111250
-                            r'(03[0-9]{2}[-.\s]?[0-9]{7})',                      # 0301 6044097
-                            r'(\+?1[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4})',  # US
-                            r'(\+?44[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})', # UK
-                            r'(\(?[0-9]{3,4}\)?[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})'   # General
-                        ]
-                        for pat in phone_patterns:
-                            pm = re.search(pat, card_text)
-                            if pm:
-                                cand = pm.group(1).strip()
-                                if 8 <= len(re.sub(r'\D', '', cand)) <= 15:
-                                    phone = cand
-                                    break
+                            try:
+                                name_el = card.locator('.qBF1Pd, .fontHeadlineSmall')
+                                if await name_el.count() == 0:
+                                    continue
+                                name = (await name_el.first.inner_text()).strip()
+                                if not name:
+                                    continue
 
-                        results.append({
-                            "name": name,
-                            "category": cat,
-                            "rating": rating,
-                            "reviews": reviews,
-                            "phone": phone,
-                            "website": website,
-                            "address": address,
-                            "source": "Google Maps"
-                        })
+                                card_text = await card.inner_text()
+                                phone = extract_clean_phone(card_text)
+
+                                # Strong Deduplication Key (Phone or Name)
+                                norm_phone = re.sub(r'\D', '', phone) if phone else ""
+                                key = f"{name.lower()}::{norm_phone}" if norm_phone else name.lower()
+                                if key in seen_keys:
+                                    continue
+                                seen_keys.add(key)
+
+                                rating = "N/A"
+                                reviews = "0"
+                                r_el = card.locator('span.MW4etd')
+                                if await r_el.count() > 0:
+                                    rating = (await r_el.first.inner_text()).strip()
+                                rev_el = card.locator('span.UY7F9')
+                                if await rev_el.count() > 0:
+                                    reviews = re.sub(r'[^\d]', '', await rev_el.first.inner_text()) or "0"
+
+                                cat = ""
+                                address = ""
+                                w_elements = await card.locator('.W4Efsd').all()
+                                for w in w_elements:
+                                    txt = (await w.inner_text()).strip()
+                                    if re.match(r'^\d+(\.\d+)?\([\d,]+\)$', txt):
+                                        continue
+                                    parts = [p.strip() for p in re.split(r'[·•\n]', txt) if p.strip()]
+                                    for p in parts:
+                                        if any(term in p for term in ['Opens', 'Closed', 'Open 24', 'AM', 'PM', 'hours', 'Appointment', 'In-store']):
+                                            continue
+                                        if re.search(r'\d+\s+[A-Za-z]+', p):
+                                            if not address:
+                                                address = p
+                                        elif not cat and len(p) < 40 and not any(p.startswith(x) for x in ['+', '(', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
+                                            cat = p
+
+                                if not cat:
+                                    cat = q.split(" in ")[0].strip().capitalize()
+
+                                website = ""
+                                site_links = await card.locator('a[data-value="Website"], a.lcr4fd, a[aria-label*="Website"], a[aria-label*="website"]').all()
+                                for sl in site_links:
+                                    h = await sl.get_attribute('href')
+                                    if h and h.startswith("http") and "google.com" not in h and "/aclk" not in h:
+                                        website = h
+                                        break
+
+                                all_results.append({
+                                    "name": name,
+                                    "category": cat,
+                                    "rating": rating,
+                                    "reviews": reviews,
+                                    "phone": phone,
+                                    "website": website,
+                                    "address": address,
+                                    "source": "Google Maps",
+                                    "matched_query": q
+                                })
+                            except Exception:
+                                continue
+
                     except Exception:
                         continue
+
             finally:
                 await browser.close()
 
-        return results
+        return all_results
 
     async def _scrape_via_duckduckgo(self, query: str, max_results: int) -> List[Dict]:
         results: List[Dict] = []
@@ -208,11 +323,7 @@ class GoogleMapsScraper:
                         snippet_el = it.find('a', class_='result__snippet')
                         snippet = snippet_el.get_text().strip() if snippet_el else ""
 
-                        phone = ""
-                        m = re.search(r'(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})', snippet)
-                        if m:
-                            phone = f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
-
+                        phone = extract_clean_phone(snippet)
                         clean_name = name.split(" - ")[0].split(" | ")[0].split(" : ")[0].strip()
                         if len(clean_name) > 40:
                             clean_name = clean_name[:40] + "..."
@@ -235,26 +346,46 @@ class GoogleMapsScraper:
     async def search_leads(
         self,
         query: str,
-        max_results: int = 10,
+        max_results: int = 50,
+        use_variations: bool = True,
         on_progress: Optional[Callable[[Dict], None]] = None
     ) -> List[Dict]:
+        """
+        Main Search Gateway:
+        If use_variations=True or max_results > 15, generates 10-20 keyword & sub-area variations,
+        runs continuous loop with live deduplication, accumulating up to max_results (50, 100, 250, 400+ leads).
+        """
+        # Parse niche and location
+        parts = query.split(" in ")
+        niche = parts[0].strip()
+        location = parts[1].strip() if len(parts) > 1 else ""
+
+        if use_variations:
+            queries = generate_expanded_queries(niche, location, max_queries=min(25, max(4, max_results // 10)))
+        else:
+            queries = [query]
+
         if async_playwright:
             try:
-                leads = await self._scrape_via_playwright(query, max_results)
+                leads = await self._scrape_multi_queries_playwright(queries, max_results)
                 if leads and len(leads) >= 2:
-                    for l in leads:
-                        site = l.get("website", "")
-                        if not site or "/aclk" in site or not site.startswith("http"):
-                            try:
-                                direct = await self._scrape_via_duckduckgo(f"{l['name']} official website", 1)
-                                if direct and direct[0].get("website"):
-                                    l["website"] = direct[0]["website"]
-                                    if not l.get("phone") and direct[0].get("phone"):
-                                        l["phone"] = direct[0]["phone"]
-                            except Exception:
-                                l["website"] = ""
                     return leads
             except Exception:
                 pass
 
-        return await self._scrape_via_duckduckgo(query, max_results)
+        # Fallback if Playwright not available
+        all_fallback: List[Dict] = []
+        seen = set()
+        for q in queries[:5]:
+            sub_res = await self._scrape_via_duckduckgo(q, max_results // 2)
+            for item in sub_res:
+                k = item["name"].lower()
+                if k not in seen:
+                    seen.add(k)
+                    all_fallback.append(item)
+                    if len(all_fallback) >= max_results:
+                        break
+            if len(all_fallback) >= max_results:
+                break
+
+        return all_fallback

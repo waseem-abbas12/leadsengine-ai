@@ -169,23 +169,27 @@
           <div>
             <label class="block text-gray-400 font-medium mb-1">Results Limit</label>
             <select id="limitInput" class="w-full px-3 py-1.5 rounded-lg bg-black/60 border border-brand-border text-white focus:border-brand-purple outline-none">
-              <option value="25">25 Leads</option>
-              <option value="50" selected>50 Leads (Recommended)</option>
-              <option value="100">100 Leads (Deep Extraction)</option>
-              <option value="250">250 Leads (Bulk Scale)</option>
-              <option value="10">10 Leads (Quick Test)</option>
+              <option value="50">50 Leads</option>
+              <option value="100" selected>100 Leads (Recommended)</option>
+              <option value="250">250 Leads (High Volume)</option>
+              <option value="400">400+ Leads (Full City Sweep)</option>
+              <option value="25">25 Leads (Quick Test)</option>
             </select>
           </div>
           <div class="flex flex-col justify-end">
-            <label class="block text-gray-400 font-medium mb-1">Quality Requirements</label>
+            <label class="block text-gray-400 font-medium mb-1">Quality & Sweep Controls</label>
             <div class="flex flex-wrap gap-2 text-[11px]">
-              <label class="inline-flex items-center gap-1 cursor-pointer">
-                <input id="filterMustEmail" type="checkbox" class="rounded accent-purple-600">
-                <span class="text-gray-300">Must Have Email</span>
+              <label class="inline-flex items-center gap-1 cursor-pointer text-purple-300 font-semibold" title="Loops through all keyword variations and sub-localities to gather 400+ leads with zero duplicates">
+                <input id="toggleVariations" type="checkbox" checked class="rounded accent-purple-600">
+                <span>Multi-Area Sweep (400+ Mode)</span>
               </label>
               <label class="inline-flex items-center gap-1 cursor-pointer">
                 <input id="filterMustPhone" type="checkbox" class="rounded accent-purple-600">
                 <span class="text-gray-300">Must Have Phone</span>
+              </label>
+              <label class="inline-flex items-center gap-1 cursor-pointer">
+                <input id="filterMustEmail" type="checkbox" class="rounded accent-purple-600">
+                <span class="text-gray-300">Must Have Email</span>
               </label>
               <label class="inline-flex items-center gap-1 cursor-pointer">
                 <input id="filterMustLinkedIn" type="checkbox" class="rounded accent-purple-600">
@@ -301,8 +305,8 @@
       <!-- Live Loading State -->
       <div id="loadingState" class="hidden py-16 text-center">
         <div class="inline-block w-12 h-12 border-4 border-brand-purple border-t-transparent rounded-full animate-spin"></div>
-        <h3 class="mt-4 text-base font-bold text-white">Engine is Hunting Decision-Makers & Verifying Contacts...</h3>
-        <p class="text-xs text-gray-400 max-w-sm mx-auto mt-1">Cross-referencing LinkedIn profiles, crawling company domains for direct dials, and testing mail server handshakes...</p>
+        <h3 class="mt-4 text-base font-bold text-white">Multi-Keyword & Sub-Area Crawler Is Sweeping Market...</h3>
+        <p class="text-xs text-gray-400 max-w-md mx-auto mt-1">Running continuous loop across query variations & sub-localities (D Ground, Madina Town, Peoples Colony, Canal Road, etc.), verifying phone numbers, and deduplicating unique records...</p>
       </div>
 
       <!-- Table Container -->
@@ -1044,6 +1048,8 @@ Sales Engine Team</textarea>
       loadingState.classList.remove('hidden');
       tableContainer.classList.add('opacity-40');
 
+      const useVariations = document.getElementById('toggleVariations').checked;
+
       try {
         const res = await fetch('/api/leads/search', {
           method: 'POST',
@@ -1055,6 +1061,7 @@ Sales Engine Team</textarea>
             seniority: seniority,
             location: location,
             max_results: limit,
+            use_variations: useVariations,
             only_with_email: mustEmail,
             only_with_phone: mustPhone,
             only_with_linkedin: mustLinkedIn
