@@ -66,12 +66,17 @@ class GoogleMapsScraper:
                 except Exception:
                     pass
 
-                for _ in range(max(1, max_results // 4)):
-                    try:
-                        await page.mouse.wheel(0, 2000)
-                        await asyncio.sleep(1)
-                    except Exception:
+                feed_locator = page.locator('div[role="feed"]')
+                scroll_attempts = min(35, max(4, max_results // 2))
+                for _ in range(scroll_attempts):
+                    current_cards = await page.locator('div.Nv2PK').all()
+                    if len(current_cards) >= max_results:
                         break
+                    if await feed_locator.count() > 0:
+                        await feed_locator.first.evaluate('(el) => el.scrollTop = el.scrollHeight')
+                    else:
+                        await page.mouse.wheel(0, 3000)
+                    await asyncio.sleep(1.0)
 
                 cards = await page.locator('div.Nv2PK').all()
                 seen = set()
@@ -125,9 +130,20 @@ class GoogleMapsScraper:
 
                         phone = ""
                         card_text = await card.inner_text()
-                        m = re.search(r'(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?([0-9]{4})', card_text)
-                        if m:
-                            phone = f"({m.group(1)}) {m.group(2)}-{m.group(3)}"
+                        phone_patterns = [
+                            r'(\+?92[-.\s]?[0-9]{3}[-.\s]?[0-9]{7})',            # +92 304 1111250
+                            r'(03[0-9]{2}[-.\s]?[0-9]{7})',                      # 0301 6044097
+                            r'(\+?1[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4})',  # US
+                            r'(\+?44[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})', # UK
+                            r'(\(?[0-9]{3,4}\)?[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})'   # General
+                        ]
+                        for pat in phone_patterns:
+                            pm = re.search(pat, card_text)
+                            if pm:
+                                cand = pm.group(1).strip()
+                                if 8 <= len(re.sub(r'\D', '', cand)) <= 15:
+                                    phone = cand
+                                    break
 
                         results.append({
                             "name": name,

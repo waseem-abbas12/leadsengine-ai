@@ -231,24 +231,63 @@ class LinkedInHunter:
                 "source": "LinkedIn Decision-Maker"
             }
 
-            # Search company website
-            company_search_query = f"{company_name} {location} official website"
-            company_sites = await self._search_web(company_search_query)
+            # 1. Extract direct phone and email from search snippet if present
+            if snippet:
+                email_match = re.search(r'\b[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+\b', snippet)
+                if email_match and "sentry" not in email_match.group(0):
+                    lead["email"] = email_match.group(0).lower()
+                    lead["email_status"] = "VERIFIED"
 
-            for cs in company_sites:
-                cs_url = cs.get("url", "")
-                if not cs_url or not cs_url.startswith("http"):
-                    continue
-                cs_lower = cs_url.lower()
-                if any(agg in cs_lower for agg in AGGREGATOR_DOMAINS):
-                    continue
-                if "linkedin.com" in cs_lower:
-                    continue
-                lead["website"] = cs_url
-                break
+                phone_patterns = [
+                    r'(\+?92[-.\s]?[0-9]{3}[-.\s]?[0-9]{7})',
+                    r'(03[0-9]{2}[-.\s]?[0-9]{7})',
+                    r'(\+?1[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4})',
+                    r'(\+?44[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})',
+                    r'(\(?[0-9]{3,4}\)?[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})'
+                ]
+                for pat in phone_patterns:
+                    pm = re.search(pat, snippet)
+                    if pm:
+                        cand = pm.group(1).strip()
+                        if 8 <= len(re.sub(r'\D', '', cand)) <= 15:
+                            lead["phone"] = cand
+                            break
 
-            # If website discovered, perform corporate email permutations & DNS MX lookup!
-            if lead["website"]:
+            # 2. Check if company_name or title has an explicit domain (e.g. Jagir.com, PakWheels.com)
+            domain_match = re.search(r'\b([a-zA-Z0-9-]+\.(?:com|pk|co|net|org|io|agency|ai|biz|ae))\b', f"{company_name} {title} {snippet}", re.IGNORECASE)
+            if domain_match:
+                lead["website"] = f"https://{domain_match.group(1).lower()}"
+
+            # 3. If no website yet, search company website via search engine
+            if not lead["website"]:
+                company_search_query = f"{company_name} {location} official website"
+                company_sites = await self._search_web(company_search_query)
+
+                for cs in company_sites:
+                    cs_url = cs.get("url", "")
+                    if not cs_url or not cs_url.startswith("http"):
+                        continue
+                    cs_lower = cs_url.lower()
+                    if any(agg in cs_lower for agg in AGGREGATOR_DOMAINS):
+                        continue
+                    if "linkedin.com" in cs_lower:
+                        continue
+                    lead["website"] = cs_url
+                    break
+
+            # 4. If still no website, test candidate domain from company name
+            if not lead["website"] and company_name:
+                clean_comp = re.sub(r'[^a-zA-Z0-9]', '', company_name.lower())
+                if len(clean_comp) > 3 and "agency" not in clean_comp and "firm" not in clean_comp:
+                    for ext in [".com", ".com.pk", ".pk"]:
+                        cand_domain = clean_comp + ext
+                        mx_cand = await LeadEnricher.validate_dns_mx(cand_domain)
+                        if mx_cand.get("valid"):
+                            lead["website"] = f"https://{cand_domain}"
+                            break
+
+            # 5. If website discovered, perform corporate email permutations & DNS MX lookup!
+            if lead["website"] and not lead["email"]:
                 domain = LeadEnricher.clean_domain(lead["website"])
                 try:
                     enrich_data = await discover_and_verify_corporate_email(person_name, domain)

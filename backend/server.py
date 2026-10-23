@@ -226,15 +226,14 @@ async def api_search(req: SearchRequest):
     elif req.mode == "maps":
         raw_leads = await maps_scraper.search_leads(search_query, max_results=req.max_results)
     else:  # Hybrid: both Maps and LinkedIn
-        half = max(2, req.max_results // 2)
         tasks = [
-            maps_scraper.search_leads(search_query, max_results=half),
+            maps_scraper.search_leads(search_query, max_results=req.max_results),
             linkedin_hunter.find_decision_makers(
                 niche=niche,
                 location=location,
                 role=req.role or "CEO, Founder, Owner, Managing Director",
                 seniority=req.seniority,
-                max_results=half
+                max_results=req.max_results
             )
         ]
         results = await asyncio.gather(*tasks, return_exceptions=True)
@@ -245,7 +244,7 @@ async def api_search(req: SearchRequest):
         for i in range(max(len(maps_res), len(li_res))):
             if i < len(li_res): raw_leads.append(li_res[i])
             if i < len(maps_res): raw_leads.append(maps_res[i])
-        raw_leads = raw_leads[:req.max_results]
+        raw_leads = raw_leads[:max(req.max_results, len(raw_leads))]
 
     if not raw_leads:
         raw_leads = await maps_scraper._scrape_via_duckduckgo(search_query, max_results=req.max_results)
