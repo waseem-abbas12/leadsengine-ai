@@ -22,7 +22,14 @@ AGGREGATOR_DOMAINS = [
     'starofservice.pk', 'starofservice.com', 'graana.com', 'pakwheels.com',
     'justdial.com', 'sulekha.com', 'indiamart.com', 'tradeindia.com',
     'yellowpages.com.pk', 'dialpakistan.com', 'pakistanbusinessdirectory.com',
-    'checkatrade.com', 'gumtree.com', 'craigslist.org', 'crunchbase.com'
+    'checkatrade.com', 'gumtree.com', 'craigslist.org', 'crunchbase.com',
+    'semfirms.com', 'pakistanproperty.com', 'renews.pk', 'jaageer.com',
+    'pakistanplaces.com', 'ilmkidunya.com', 'urdupoint.com', 'hamariweb.com',
+    'parhlo.com', 'top10place.com', 'locate92.com', 'locale.online',
+    'entireplace.com', 'bizdirpk.com', 'pakistanyp.com', 'tribune.com.pk',
+    'dawn.com', 'thenews.com.pk', 'propakistani.pk', 'mustakbil.com', 'rozee.pk',
+    'top-agencies.com', 'agencies.pk', 'pakrealestate.com', 'properties.pk',
+    'apnafurniture.pk', 'bolnews.com', 'dunya.com.pk', 'dailypakistan.com.pk'
 ]
 
 PAKISTAN_SUB_AREAS = {

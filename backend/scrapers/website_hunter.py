@@ -16,7 +16,13 @@ PHONE_REGEX = re.compile(r'(?:\+?1[-. ]?)?\(?([0-9]{3})\)?[-. ]?([0-9]{3})[-. ]?
 OWNER_REGEX = re.compile(r'(?:founder|ceo|owner|director|president|dr\.|doctor)\s*[:\-–]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})', re.IGNORECASE)
 
 IGNORE_EMAIL_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.pdf', '.css', '.js'}
-IGNORE_DOMAINS = {'sentry.io', 'wixpress.com', 'schema.org', 'google.com', 'facebook.com', 'cloudflare.com', 'gravatar.com'}
+IGNORE_DOMAINS = {
+    'sentry.io', 'wixpress.com', 'schema.org', 'google.com', 'facebook.com', 
+    'cloudflare.com', 'gravatar.com', 'zameen.com', 'olx.com.pk', 'olx.com',
+    'semfirms.com', 'pakistanproperty.com', 'renews.pk', 'jaageer.com',
+    'pakistanplaces.com', 'ilmkidunya.com', 'urdupoint.com', 'hamariweb.com',
+    'yelp.com', 'yellowpages.com', 'tripadvisor.com'
+}
 
 class WebsiteHunter:
     def __init__(self, timeout: float = 8.0, max_pages_per_site: int = 3):
@@ -158,15 +164,22 @@ class WebsiteHunter:
                 for tel in soup.select('a[href^="tel:"]'):
                     raw_tel = tel.get('href', '').replace('tel:', '').strip()
                     digits = re.sub(r'[^\d]', '', raw_tel)
-                    if len(digits) == 10:
-                        all_phones.add(f"({digits[:3]}) {digits[3:6]}-{digits[6:]}")
-                    elif len(digits) == 11 and digits.startswith('1'):
-                        all_phones.add(f"({digits[1:4]}) {digits[4:7]}-{digits[7:]}")
+                    if 8 <= len(digits) <= 15:
+                        all_phones.add(raw_tel)
 
-                # 4. Text phone regex
-                phones = PHONE_REGEX.findall(page_text)
-                for p in phones:
-                    all_phones.add(f"({p[0]}) {p[1]}-{p[2]}")
+                # 4. Text phone regex (US, Pakistan, UK, International)
+                phone_patterns = [
+                    r'(\+?92[-.\s]?[0-9]{3}[-.\s]?[0-9]{7})',
+                    r'(03[0-9]{2}[-.\s]?[0-9]{7})',
+                    r'(\+?1[-.\s]?\(?[0-9]{3}\)?[-.\s]?[0-9]{3}[-.\s]?[0-9]{4})',
+                    r'(\+?44[-.\s]?[0-9]{2,4}[-.\s]?[0-9]{3,4}[-.\s]?[0-9]{3,4})'
+                ]
+                for pat in phone_patterns:
+                    matches = re.findall(pat, page_text)
+                    for m in matches:
+                        d = re.sub(r'\D', '', m)
+                        if 8 <= len(d) <= 15:
+                            all_phones.add(m.strip())
 
                 # 5. Socials
                 soc = self.extract_socials(soup)
