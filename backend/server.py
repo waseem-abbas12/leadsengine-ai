@@ -1,10 +1,11 @@
 import os
 import io
+import re
 import base64
 import asyncio
 import httpx
 import pandas as pd
-from typing import List, Optional
+from typing import List, Optional, Dict, Any
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Response
 from fastapi.responses import RedirectResponse, StreamingResponse, FileResponse, HTMLResponse
 from fastapi.staticfiles import StaticFiles
@@ -15,7 +16,12 @@ from backend.config import BASE_DIR, BASE_URL
 from backend.scrapers.gmaps_scraper import GoogleMapsScraper
 from backend.scrapers.website_hunter import WebsiteHunter
 from backend.scrapers.linkedin_hunter import LinkedInHunter
-from backend.scrapers.email_verifier import verify_email
+from backend.scrapers.email_verifier import (
+    verify_email,
+    LeadEnricher,
+    SmtpVerifier,
+    discover_and_verify_corporate_email
+)
 from backend.ai.enricher import AIEnricher
 from backend.outreach.tracker import (
     init_db, save_lead, get_all_leads, record_email_open,
@@ -57,12 +63,24 @@ class SearchRequest(BaseModel):
     prompt: str
     mode: str = "hybrid"  # "hybrid", "linkedin", "maps"
     role: Optional[str] = "CEO, Founder, Owner, Managing Director"
+    seniority: Optional[str] = None  # "c_level", "founder", "vp", "director", "manager"
     location: Optional[str] = ""
     max_results: int = 10
     only_with_email: bool = False
     only_with_phone: bool = False
     only_with_linkedin: bool = False
     min_score: int = 0
+
+class PredictEmailRequest(BaseModel):
+    name: str
+    domain: str
+
+class VerifyEmailRequest(BaseModel):
+    email: str
+
+class ParseRawTextRequest(BaseModel):
+    raw_text: str
+    default_domain: Optional[str] = ""
 
 class CampaignRequest(BaseModel):
     lead_ids: Optional[List[int]] = None
@@ -84,6 +102,106 @@ async def api_stats():
 async def api_leads(limit: int = 100):
     return get_all_leads(limit=limit)
 
+@app.post("/api/leads/predict-email")
+async def api_predict_email(req: PredictEmailRequest):
+    """
+    Reverse-engineers Apollo/Lusha email discovery:
+    Generates 8 standard corporate email permutations and verifies MX server & mailbox.
+    """
+    if not req.name or not req.domain:
+        raise HTTPException(status_code=400, detail="Name and domain are required")
+    res = await discover_and_verify_corporate_email(req.name, req.domain)
+    return res
+
+@app.post("/api/leads/verify-email")
+async def api_verify_single(req: VerifyEmailRequest):
+    """
+    Runs direct SMTP Handshake + Catch-All detection on any email.
+    """
+    if not req.email or "@" not in req.email:
+        raise HTTPException(status_code=400, detail="Valid email address is required")
+    domain = LeadEnricher.clean_domain(req.email.split("@")[1])
+    mx_info = await LeadEnricher.validate_dns_mx(domain)
+    primary_mx = mx_info.get("host", "")
+    
+    smtp_res = await SmtpVerifier.verify_mailbox(primary_mx, req.email)
+    return {
+        "email": req.email,
+        "valid": smtp_res.get("deliverable", False),
+        "status": smtp_res.get("status", "UNVERIFIED"),
+        "label": smtp_res.get("label", ""),
+        "provider": mx_info.get("provider", "Unknown"),
+        "mx_host": primary_mx,
+        "is_catch_all": smtp_res.get("catch_all", False)
+    }
+
+@app.post("/api/leads/parse-raw")
+async def api_parse_raw_text(req: ParseRawTextRequest):
+    """
+    Direct SERP & LinkedIn Ingest Bridge (from OpenLead X):
+    Instantly parses pasted Google search results or LinkedIn profile URLs,
+    extracts names/titles, resolves corporate domain MX, predicts emails, and stores leads.
+    """
+    text = req.raw_text.strip()
+    if not text:
+        raise HTTPException(status_code=400, detail="raw_text cannot be empty")
+
+    lines = [line.strip() for line in text.split("\n") if line.strip()]
+    parsed_leads = []
+    seen_urls = set()
+
+    for i, line in enumerate(lines):
+        if "linkedin" in line.lower() or " - " in line or " – " in line or " | " in line:
+            name, jt, comp = linkedin_hunter.parse_linkedin_title(line)
+            if len(name.split()) >= 2 and len(name) < 45 and not name.lower().startswith("http"):
+                associated_url = ""
+                for nearby in lines[max(0, i-1):min(len(lines), i+4)]:
+                    m = re.search(r"https?://(?:[a-z]{2,3}\.)?linkedin\.com/in/([a-zA-Z0-9_-]+)", nearby, re.IGNORECASE)
+                    if m:
+                        associated_url = f"https://www.linkedin.com/in/{m.group(1).lower()}"
+                        break
+
+                if not associated_url:
+                    slug = re.sub(r"[^a-zA-Z0-9]", "-", name.lower()).strip("-")
+                    associated_url = f"https://www.linkedin.com/in/{slug}"
+
+                if associated_url not in seen_urls:
+                    seen_urls.add(associated_url)
+                    lead_domain = req.default_domain or (f"{re.sub(r'[^a-zA-Z0-9]', '', comp.lower())}.com" if comp else "")
+                    
+                    enrich = await discover_and_verify_corporate_email(name, lead_domain) if lead_domain else {}
+
+                    lead_dict = {
+                        "name": comp or "Executive Firm",
+                        "category": "Direct SERP Ingest",
+                        "founder_name": name,
+                        "founder_role": jt or "Executive",
+                        "rating": "5.0",
+                        "reviews": "1",
+                        "phone": "",
+                        "website": f"https://{lead_domain}" if lead_domain else "",
+                        "address": "",
+                        "email": enrich.get("email", ""),
+                        "email_status": enrich.get("email_status", "NONE"),
+                        "mx_provider": enrich.get("provider", ""),
+                        "socials": {"linkedin": associated_url, "instagram": "", "facebook": "", "twitter": ""},
+                        "ai_score": 85,
+                        "pitch_hook": f"Hi {name}, saw your profile as {jt} at {comp}. Would love to connect and share some strategic growth opportunities.",
+                        "source": "SERP / URL Ingest"
+                    }
+                    try:
+                        lead_id = save_lead(lead_dict, search_query="Manual SERP Ingest")
+                        lead_dict["id"] = lead_id
+                    except Exception:
+                        lead_dict["id"] = 0
+                    parsed_leads.append(lead_dict)
+
+    return {
+        "status": "success",
+        "parsed_count": len(parsed_leads),
+        "leads": parsed_leads
+    }
+
 @app.post("/api/leads/search")
 async def api_search(req: SearchRequest):
     if not req.prompt.strip():
@@ -102,6 +220,7 @@ async def api_search(req: SearchRequest):
             niche=niche,
             location=location,
             role=req.role or "CEO, Founder, Owner, Managing Director",
+            seniority=req.seniority,
             max_results=req.max_results
         )
     elif req.mode == "maps":
@@ -114,6 +233,7 @@ async def api_search(req: SearchRequest):
                 niche=niche,
                 location=location,
                 role=req.role or "CEO, Founder, Owner, Managing Director",
+                seniority=req.seniority,
                 max_results=half
             )
         ]
@@ -147,6 +267,8 @@ async def api_search(req: SearchRequest):
                 "address": item.get("address", "") or location,
                 "email": item.get("email", ""),
                 "email_status": item.get("email_status", "NONE"),
+                "mx_provider": item.get("mx_provider", ""),
+                "email_permutations": item.get("email_permutations", []),
                 "founder_name": item.get("founder_name", ""),
                 "founder_role": item.get("founder_role", ""),
                 "socials": item.get("socials", {"linkedin": "", "instagram": "", "facebook": "", "twitter": ""}),
@@ -172,10 +294,27 @@ async def api_search(req: SearchRequest):
                 except Exception:
                     pass
 
-            if lead["email"] and lead["email_status"] == "NONE":
+            # If email is still empty but we have founder_name and website/domain:
+            if not lead["email"] and lead["website"] and lead["founder_name"]:
+                try:
+                    dom = LeadEnricher.clean_domain(lead["website"])
+                    enrich_data = await discover_and_verify_corporate_email(lead["founder_name"], dom)
+                    if enrich_data.get("email"):
+                        lead["email"] = enrich_data["email"]
+                        lead["email_status"] = enrich_data["email_status"]
+                        lead["mx_provider"] = enrich_data.get("provider", "")
+                        lead["email_permutations"] = enrich_data.get("permutations", [])
+                except Exception:
+                    pass
+
+            # If email exists, verify it if not yet verified
+            if lead["email"] and lead["email_status"] in ["NONE", "UNKNOWN"]:
                 try:
                     is_valid, status = verify_email(lead["email"])
                     lead["email_status"] = status
+                    dom = LeadEnricher.clean_domain(lead["email"].split("@")[1])
+                    mx_info = await LeadEnricher.validate_dns_mx(dom)
+                    lead["mx_provider"] = mx_info.get("provider", "")
                 except Exception:
                     lead["email_status"] = "RISKY"
 
@@ -185,6 +324,8 @@ async def api_search(req: SearchRequest):
                 base_score += 15
             if lead.get("founder_role"):
                 base_score += 15
+            if lead.get("email_status") in ["VERIFIED", "PREDICTED_MX"]:
+                base_score += 10
             lead["ai_score"] = min(100, base_score)
 
             if not lead["pitch_hook"]:
@@ -237,6 +378,7 @@ async def api_export(format: str = Query("csv", pattern="^(csv|xlsx)$")):
             "Category": l.get("category"),
             "Verified Email": l.get("email"),
             "Email Status": l.get("email_status"),
+            "Mail Provider (MX)": l.get("mx_provider", ""),
             "Phone Number": l.get("phone"),
             "Website": l.get("website"),
             "Rating": l.get("rating"),

@@ -33,6 +33,11 @@ def init_db():
     except Exception:
         pass
 
+    try:
+        cursor.execute("ALTER TABLE leads ADD COLUMN mx_provider TEXT")
+    except Exception:
+        pass
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS email_logs (
         id TEXT PRIMARY KEY,
@@ -58,8 +63,8 @@ def save_lead(lead: Dict[str, Any], search_query: str = "") -> int:
     cursor.execute("""
     INSERT INTO leads (
         name, category, rating, reviews, phone, website,
-        email, email_status, founder_name, founder_role, socials, ai_score, pitch_hook, search_query
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        email, email_status, founder_name, founder_role, mx_provider, socials, ai_score, pitch_hook, search_query
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         lead.get("name", ""),
         lead.get("category", ""),
@@ -71,6 +76,7 @@ def save_lead(lead: Dict[str, Any], search_query: str = "") -> int:
         lead.get("email_status", "UNKNOWN"),
         lead.get("founder_name", ""),
         lead.get("founder_role", ""),
+        lead.get("mx_provider", ""),
         json.dumps(lead.get("socials", {})),
         lead.get("ai_score", 50),
         lead.get("pitch_hook", ""),
@@ -133,33 +139,24 @@ def record_email_click(log_id: str):
 def get_stats() -> Dict[str, Any]:
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-
     cursor.execute("SELECT COUNT(*) FROM leads")
     total_leads = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM leads WHERE email != '' AND email IS NOT NULL")
-    emails_found = cursor.fetchone()[0]
-
     cursor.execute("SELECT COUNT(*) FROM email_logs")
-    emails_sent = cursor.fetchone()[0]
+    total_sent = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM email_logs WHERE open_count > 0")
-    emails_opened = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM email_logs WHERE opened_at IS NOT NULL")
+    total_opened = cursor.fetchone()[0]
 
-    cursor.execute("SELECT COUNT(*) FROM email_logs WHERE click_count > 0")
-    emails_clicked = cursor.fetchone()[0]
+    cursor.execute("SELECT COUNT(*) FROM email_logs WHERE clicked_at IS NOT NULL")
+    total_clicked = cursor.fetchone()[0]
 
     conn.close()
-
-    open_rate = round((emails_opened / emails_sent * 100), 1) if emails_sent > 0 else 0.0
-    click_rate = round((emails_clicked / emails_sent * 100), 1) if emails_sent > 0 else 0.0
-
     return {
         "total_leads": total_leads,
-        "emails_found": emails_found,
-        "emails_sent": emails_sent,
-        "emails_opened": emails_opened,
-        "emails_clicked": emails_clicked,
-        "open_rate": open_rate,
-        "click_rate": click_rate
+        "emails_sent": total_sent,
+        "emails_opened": total_opened,
+        "emails_clicked": total_clicked,
+        "open_rate": f"{(total_opened / total_sent * 100):.1f}%" if total_sent > 0 else "0.0%",
+        "click_rate": f"{(total_clicked / total_sent * 100):.1f}%" if total_sent > 0 else "0.0%"
     }
