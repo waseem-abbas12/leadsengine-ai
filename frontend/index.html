@@ -176,13 +176,20 @@
           <p class="text-xs text-gray-400 mt-0.5">Scraped, enriched with emails, phones, socials, and AI scored</p>
         </div>
 
-        <!-- Export Buttons -->
-        <div class="flex items-center gap-2 w-full sm:w-auto">
-          <a href="/api/leads/export?format=csv" class="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 text-xs font-semibold flex items-center justify-center gap-2 transition">
-            <i class="fa-solid fa-file-csv text-emerald-400"></i> Export CSV
+        <!-- Filters & Export Buttons -->
+        <div class="flex flex-wrap items-center gap-2 w-full sm:w-auto">
+          <div class="flex items-center bg-black/40 border border-brand-border rounded-lg p-0.5 text-xs">
+            <button onclick="applyFilter('all')" data-filter="all" class="filter-btn px-2.5 py-1 rounded-md bg-brand-purple text-white font-medium transition">All</button>
+            <button onclick="applyFilter('email')" data-filter="email" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">With Email</button>
+            <button onclick="applyFilter('phone')" data-filter="phone" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">With Phone</button>
+            <button onclick="applyFilter('high_score')" data-filter="high_score" class="filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition">Score 70+</button>
+          </div>
+          <div class="h-4 w-px bg-brand-border hidden sm:block"></div>
+          <a href="/api/leads/export?format=csv" class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 text-xs font-semibold flex items-center gap-1.5 transition">
+            <i class="fa-solid fa-file-csv text-emerald-400"></i> CSV
           </a>
-          <a href="/api/leads/export?format=xlsx" class="flex-1 sm:flex-initial px-3.5 py-2 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 text-xs font-semibold flex items-center justify-center gap-2 transition">
-            <i class="fa-solid fa-file-excel text-green-400"></i> Export Excel
+          <a href="/api/leads/export?format=xlsx" class="px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-gray-300 border border-white/10 text-xs font-semibold flex items-center gap-1.5 transition">
+            <i class="fa-solid fa-file-excel text-green-400"></i> Excel
           </a>
         </div>
       </div>
@@ -301,14 +308,38 @@ Sales Engine Team</textarea>
       }
     }
 
+    let allFetchedLeads = [];
+    let currentFilter = 'all';
+
     async function loadLeads() {
       try {
         const res = await fetch('/api/leads');
-        const leads = await res.json();
-        renderTable(leads);
+        allFetchedLeads = await res.json();
+        applyFilter(currentFilter);
       } catch (e) {
         console.error(e);
       }
+    }
+
+    function applyFilter(filterType) {
+      currentFilter = filterType;
+      document.querySelectorAll('.filter-btn').forEach(btn => {
+        if (btn.dataset.filter === filterType) {
+          btn.className = 'filter-btn px-2.5 py-1 rounded-md bg-brand-purple text-white font-medium transition';
+        } else {
+          btn.className = 'filter-btn px-2.5 py-1 rounded-md text-gray-400 hover:text-white transition';
+        }
+      });
+
+      let filtered = allFetchedLeads;
+      if (filterType === 'email') {
+        filtered = allFetchedLeads.filter(l => l.email);
+      } else if (filterType === 'phone') {
+        filtered = allFetchedLeads.filter(l => l.phone);
+      } else if (filterType === 'high_score') {
+        filtered = allFetchedLeads.filter(l => (l.ai_score || 0) >= 70);
+      }
+      renderTable(filtered);
     }
 
     function renderTable(leads) {

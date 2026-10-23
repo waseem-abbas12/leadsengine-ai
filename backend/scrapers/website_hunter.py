@@ -1,7 +1,8 @@
+import asyncio
 import re
 from urllib.parse import urljoin, urlparse
 from bs4 import BeautifulSoup
-from typing import Dict, Set, Optional
+from typing import Dict, Set, Optional, List
 
 try:
     from curl_cffi import requests as curl_requests
@@ -18,9 +19,14 @@ IGNORE_EMAIL_EXTS = {'.png', '.jpg', '.jpeg', '.gif', '.svg', '.webp', '.pdf', '
 IGNORE_DOMAINS = {'sentry.io', 'wixpress.com', 'schema.org', 'google.com', 'facebook.com', 'cloudflare.com', 'gravatar.com'}
 
 class WebsiteHunter:
-    def __init__(self, timeout: int = 10, max_pages_per_site: int = 3):
+    def __init__(self, timeout: float = 8.0, max_pages_per_site: int = 3):
         self.timeout = timeout
         self.max_pages = max_pages_per_site
+        self.headers = {
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
+        }
 
     def clean_emails(self, text: str) -> Set[str]:
         raw_emails = EMAIL_REGEX.findall(text)
@@ -58,33 +64,16 @@ class WebsiteHunter:
                 return name
         return None
 
-    def _fetch_page(self, url: str) -> Optional[str]:
-        if curl_requests:
-            try:
-                r = curl_requests.get(url, impersonate="chrome120", timeout=self.timeout, verify=False)
-                if r.status_code == 200:
-                    return r.text
-            except Exception:
-                pass
-        
-        # Standard HTTPX fallback (runs anywhere on Vercel)
+    async def _fetch_page(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
         try:
-            headers = {"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36"}
-            with httpx.Client(headers=headers, timeout=float(self.timeout), follow_redirects=True, verify=False) as client:
-                resp = client.get(url)
-                if resp.status_code == 200:
-                    return resp.text
+            resp = await client.get(url, timeout=self.timeout)
+            if resp.status_code == 200:
+                return resp.text
         except Exception:
             pass
         return None
 
-    async def crawl_site(self, website_url: str) -> Dict:
-        if not website_url.startswith("http"):
-            website_url = "https://" + website_url
-
-        parsed = urlparse(website_url)
-        base_domain = f"{parsed.scheme}://{parsed.netloc}"
-
+    async def crawl_site(self, website_url: str, client: Optional[httpx.AsyncClient] = None) -> Dict:
         result = {
             "website": website_url,
             "emails": [],
@@ -96,44 +85,88 @@ class WebsiteHunter:
             "description": ""
         }
 
+        if not website_url or "/aclk" in website_url or "google.com" in website_url:
+            return result
+
+        if not website_url.startswith("http"):
+            website_url = "https://" + website_url
+
+        try:
+            parsed = urlparse(website_url)
+            if not parsed.netloc or "." not in parsed.netloc:
+                return result
+            base_domain = f"{parsed.scheme}://{parsed.netloc}"
+        except Exception:
+            return result
+
         pages_to_visit = [website_url, urljoin(base_domain, "/contact"), urljoin(base_domain, "/about")]
+        pages_to_visit = pages_to_visit[:self.max_pages]
+
         all_emails: Set[str] = set()
         all_phones: Set[str] = set()
 
-        for u in pages_to_visit[:self.max_pages]:
-            html_text = self._fetch_page(u)
-            if not html_text:
-                continue
+        close_client = False
+        if client is None:
+            client = httpx.AsyncClient(
+                headers=self.headers,
+                follow_redirects=True,
+                verify=False,
+                timeout=self.timeout
+            )
+            close_client = True
 
-            soup = BeautifulSoup(html_text, 'html.parser')
-            page_text = soup.get_text(separator=' ')
+        try:
+            fetch_tasks = [self._fetch_page(client, u) for u in pages_to_visit]
+            responses = await asyncio.gather(*fetch_tasks, return_exceptions=True)
 
-            if not result["title"] and soup.title and soup.title.string:
-                result["title"] = soup.title.string.strip()
+            for html_text in responses:
+                if not html_text or not isinstance(html_text, str):
+                    continue
 
-            for mailto in soup.select('a[href^="mailto:"]'):
-                href = mailto.get('href', '').replace('mailto:', '').split('?')[0].strip()
-                if href:
-                    all_emails.add(href.lower())
+                soup = BeautifulSoup(html_text, 'html.parser')
+                page_text = soup.get_text(separator=' ')
 
-            all_emails.update(self.clean_emails(page_text))
+                if not result["title"] and soup.title and soup.title.string:
+                    result["title"] = soup.title.string.strip()
 
-            phones = PHONE_REGEX.findall(page_text)
-            for p in phones:
-                all_phones.add(f"({p[0]}) {p[1]}-{p[2]}")
+                # 1. Mailto links
+                for mailto in soup.select('a[href^="mailto:"]'):
+                    href = mailto.get('href', '').replace('mailto:', '').split('?')[0].strip()
+                    if href:
+                        all_emails.add(href.lower())
 
-            soc = self.extract_socials(soup)
-            for k, v in soc.items():
-                if v and not result["socials"][k]:
-                    result["socials"][k] = v
+                # 2. Text emails regex
+                all_emails.update(self.clean_emails(page_text))
 
-            if not result["founder_name"]:
-                f_name = self.extract_founder(page_text)
-                if f_name:
-                    result["founder_name"] = f_name
+                # 3. Tel: links
+                for tel in soup.select('a[href^="tel:"]'):
+                    raw_tel = tel.get('href', '').replace('tel:', '').strip()
+                    digits = re.sub(r'[^\d]', '', raw_tel)
+                    if len(digits) == 10:
+                        all_phones.add(f"({digits[:3]}) {digits[3:6]}-{digits[6:]}")
+                    elif len(digits) == 11 and digits.startswith('1'):
+                        all_phones.add(f"({digits[1:4]}) {digits[4:7]}-{digits[7:]}")
 
-            if all_emails:
-                break
+                # 4. Text phone regex
+                phones = PHONE_REGEX.findall(page_text)
+                for p in phones:
+                    all_phones.add(f"({p[0]}) {p[1]}-{p[2]}")
+
+                # 5. Socials
+                soc = self.extract_socials(soup)
+                for k, v in soc.items():
+                    if v and not result["socials"][k]:
+                        result["socials"][k] = v
+
+                # 6. Founder name
+                if not result["founder_name"]:
+                    f_name = self.extract_founder(page_text)
+                    if f_name:
+                        result["founder_name"] = f_name
+
+        finally:
+            if close_client:
+                await client.aclose()
 
         result["emails"] = list(all_emails)
         if result["emails"]:

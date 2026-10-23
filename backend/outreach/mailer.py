@@ -61,10 +61,12 @@ def send_cold_email(
     # 2. Layer 3: Wrap links for click tracking
     wrapped_body = wrap_links_for_tracking(rendered_body, log_id, base_url)
 
-    # 3. Layer 2: Injected 1x1 transparent tracking pixel
+    # 3. Layer 2: Injected 1x1 transparent tracking pixel + Unsubscribe footer
     pixel_url = f"{base_url}/api/track/open/{log_id}"
     tracking_pixel = f'<img src="{pixel_url}" width="1" height="1" style="display:none !important;" alt="" />'
-    final_html = f"{wrapped_body}<br><br>{tracking_pixel}"
+    unsubscribe_url = f"{base_url}/api/unsubscribe/{log_id}"
+    unsubscribe_footer = f'<br><br><span style="font-size:11px;color:#888;">If you prefer not to receive future emails from us, please <a href="{unsubscribe_url}" style="color:#666;text-decoration:underline;">click here to unsubscribe</a>.</span>'
+    final_html = f"{wrapped_body}{unsubscribe_footer}<br><br>{tracking_pixel}"
 
     # Check if SMTP credentials exist
     if not SMTP_USER or not SMTP_PASSWORD:

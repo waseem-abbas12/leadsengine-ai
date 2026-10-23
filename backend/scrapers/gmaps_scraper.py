@@ -89,15 +89,30 @@ class GoogleMapsScraper:
                             reviews = re.sub(r'[^\d]', '', await rev_el.first.inner_text()) or "0"
 
                         cat = ""
-                        cat_el = card.locator('.W4Efsd')
-                        if await cat_el.count() > 0:
-                            cat = (await cat_el.first.inner_text()).strip().split('·')[0].strip()
+                        address = ""
+                        w_elements = await card.locator('.W4Efsd').all()
+                        for w in w_elements:
+                            txt = (await w.inner_text()).strip()
+                            if re.match(r'^\d+(\.\d+)?\([\d,]+\)$', txt):
+                                continue
+                            parts = [p.strip() for p in re.split(r'[·•\n]', txt) if p.strip()]
+                            for p in parts:
+                                if any(term in p for term in ['Opens', 'Closed', 'Open 24', 'AM', 'PM', 'hours', 'Appointment', 'In-store']):
+                                    continue
+                                if re.search(r'\d+\s+[A-Za-z]+', p):
+                                    if not address:
+                                        address = p
+                                elif not cat and len(p) < 40 and not any(p.startswith(x) for x in ['+', '(', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9']):
+                                    cat = p
+
+                        if not cat:
+                            cat = query.split(" in ")[0].strip().capitalize()
 
                         website = ""
-                        site_links = await card.locator('a[data-value="Website"], a.lcr4fd').all()
+                        site_links = await card.locator('a[data-value="Website"], a.lcr4fd, a[aria-label*="Website"], a[aria-label*="website"]').all()
                         for sl in site_links:
                             h = await sl.get_attribute('href')
-                            if h and "google.com" not in h:
+                            if h and h.startswith("http") and "google.com" not in h and "/aclk" not in h:
                                 website = h
                                 break
 
@@ -114,7 +129,7 @@ class GoogleMapsScraper:
                             "reviews": reviews,
                             "phone": phone,
                             "website": website,
-                            "address": "",
+                            "address": address,
                             "source": "Google Maps"
                         })
                     except Exception:
@@ -172,8 +187,8 @@ class GoogleMapsScraper:
                         results.append({
                             "name": clean_name,
                             "category": query.split(" in ")[0].capitalize(),
-                            "rating": "4.9",
-                            "reviews": "48",
+                            "rating": "N/A",
+                            "reviews": "0",
                             "phone": phone,
                             "website": target_url,
                             "address": "",
@@ -195,12 +210,16 @@ class GoogleMapsScraper:
                 leads = await self._scrape_via_playwright(query, max_results)
                 if leads and len(leads) >= 2:
                     for l in leads:
-                        if not l.get("website"):
-                            direct = await self._scrape_via_duckduckgo(f"{l['name']} official website", 1)
-                            if direct:
-                                l["website"] = direct[0]["website"]
-                                if not l.get("phone") and direct[0].get("phone"):
-                                    l["phone"] = direct[0]["phone"]
+                        site = l.get("website", "")
+                        if not site or "/aclk" in site or not site.startswith("http"):
+                            try:
+                                direct = await self._scrape_via_duckduckgo(f"{l['name']} official website", 1)
+                                if direct and direct[0].get("website"):
+                                    l["website"] = direct[0]["website"]
+                                    if not l.get("phone") and direct[0].get("phone"):
+                                        l["phone"] = direct[0]["phone"]
+                            except Exception:
+                                l["website"] = ""
                     return leads
             except Exception:
                 pass

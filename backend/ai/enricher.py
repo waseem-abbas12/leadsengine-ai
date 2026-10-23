@@ -82,7 +82,8 @@ class AIEnricher:
         reviews = lead.get("reviews", "0")
         rating = lead.get("rating", "N/A")
         
-        if int(reviews) if reviews.isdigit() else 0 > 20:
+        review_count = int(reviews) if str(reviews).isdigit() else 0
+        if review_count > 20:
             hook = f"Hi {name}, saw {company} has an impressive {rating} star rating ({reviews} reviews). Reaching out because businesses at your level usually look to scale client acquisition without adding more manual follow-ups."
         elif lead.get("website"):
             hook = f"Hi {name}, was just checking out {company}'s website and noticed a few quick opportunities to plug revenue leaks and book more appointments directly from your traffic."

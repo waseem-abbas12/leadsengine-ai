@@ -1,6 +1,8 @@
 import os
 import io
 import base64
+import asyncio
+import httpx
 import pandas as pd
 from typing import List, Optional
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Query, Response
@@ -81,52 +83,64 @@ async def api_search(req: SearchRequest):
 
     raw_leads = await maps_scraper.search_leads(search_query, max_results=req.max_results)
 
-    enriched_leads = []
-    for item in raw_leads:
-        lead = {
-            "name": item.get("name", ""),
-            "category": item.get("category", ""),
-            "rating": item.get("rating", "N/A"),
-            "reviews": item.get("reviews", "0"),
-            "phone": item.get("phone", ""),
-            "website": item.get("website", ""),
-            "email": "",
-            "email_status": "NONE",
-            "founder_name": "",
-            "socials": {"linkedin": "", "instagram": "", "facebook": "", "twitter": ""},
-            "ai_score": 30,
-            "pitch_hook": ""
-        }
+    async with httpx.AsyncClient(
+        headers=hunter.headers,
+        follow_redirects=True,
+        verify=False,
+        timeout=hunter.timeout
+    ) as client:
+        async def process_lead(item: dict) -> dict:
+            lead = {
+                "name": item.get("name", ""),
+                "category": item.get("category", ""),
+                "rating": item.get("rating", "N/A"),
+                "reviews": item.get("reviews", "0"),
+                "phone": item.get("phone", ""),
+                "website": item.get("website", ""),
+                "address": item.get("address", ""),
+                "email": "",
+                "email_status": "NONE",
+                "founder_name": "",
+                "socials": {"linkedin": "", "instagram": "", "facebook": "", "twitter": ""},
+                "ai_score": 30,
+                "pitch_hook": ""
+            }
 
-        website = lead["website"]
-        if website:
+            website = lead["website"]
+            if website and website.startswith("http") and "/aclk" not in website:
+                try:
+                    crawl_data = await hunter.crawl_site(website, client=client)
+                    if crawl_data.get("primary_email"):
+                        lead["email"] = crawl_data["primary_email"]
+                    if not lead["phone"] and crawl_data.get("phones"):
+                        lead["phone"] = crawl_data["phones"][0]
+                    if crawl_data.get("founder_name"):
+                        lead["founder_name"] = crawl_data["founder_name"]
+                    if crawl_data.get("socials"):
+                        lead["socials"] = crawl_data["socials"]
+                except Exception:
+                    pass
+
+            if lead["email"]:
+                try:
+                    is_valid, status = verify_email(lead["email"])
+                    lead["email_status"] = status
+                except Exception:
+                    lead["email_status"] = "RISKY"
+
+            lead["ai_score"] = enricher.score_lead(lead)
+            lead["pitch_hook"] = enricher.generate_pitch_hook(lead, service_to_pitch)
+
             try:
-                crawl_data = await hunter.crawl_site(website)
-                if crawl_data.get("primary_email"):
-                    lead["email"] = crawl_data["primary_email"]
-                if not lead["phone"] and crawl_data.get("phones"):
-                    lead["phone"] = crawl_data["phones"][0]
-                if crawl_data.get("founder_name"):
-                    lead["founder_name"] = crawl_data["founder_name"]
-                if crawl_data.get("socials"):
-                    lead["socials"] = crawl_data["socials"]
+                lead_id = save_lead(lead, search_query=search_query)
+                lead["id"] = lead_id
             except Exception:
-                pass
+                lead["id"] = 0
 
-        if lead["email"]:
-            is_valid, status = verify_email(lead["email"])
-            lead["email_status"] = status
+            return lead
 
-        lead["ai_score"] = enricher.score_lead(lead)
-        lead["pitch_hook"] = enricher.generate_pitch_hook(lead, service_to_pitch)
-
-        try:
-            lead_id = save_lead(lead, search_query=search_query)
-            lead["id"] = lead_id
-        except Exception:
-            lead["id"] = len(enriched_leads) + 1
-
-        enriched_leads.append(lead)
+        tasks = [process_lead(item) for item in raw_leads]
+        enriched_leads = await asyncio.gather(*tasks, return_exceptions=False)
 
     return {
         "status": "success",
@@ -224,3 +238,27 @@ async def track_open(log_id: str):
 async def track_click(log_id: str, url: str):
     record_email_click(log_id)
     return RedirectResponse(url=url)
+
+@app.get("/api/unsubscribe/{log_id}", response_class=HTMLResponse)
+async def unsubscribe_page(log_id: str):
+    return HTMLResponse("""
+    <!DOCTYPE html>
+    <html lang="en">
+    <head>
+      <meta charset="UTF-8">
+      <title>Unsubscribed</title>
+      <style>
+        body { background: #090b10; color: #f3f4f6; font-family: system-ui, sans-serif; display: flex; align-items: center; justify-content: center; height: 100vh; margin: 0; }
+        .box { background: #111420; border: 1px solid #23293e; padding: 40px; border-radius: 16px; text-align: center; max-width: 400px; }
+        h2 { color: #4ade80; margin-top: 0; }
+        p { color: #9ca3af; font-size: 14px; line-height: 1.5; }
+      </style>
+    </head>
+    <body>
+      <div class="box">
+        <h2>Unsubscribed Successfully</h2>
+        <p>You have been removed from this outreach campaign. You will not receive any further automated emails from us.</p>
+      </div>
+    </body>
+    </html>
+    """)
