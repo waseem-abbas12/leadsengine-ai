@@ -15,7 +15,14 @@ AGGREGATOR_DOMAINS = [
     'yellowpages.com', 'bbb.org', 'zocdoc.com', 'expertise.com',
     'wikipedia.org', 'facebook.com', 'tripadvisor.com', 'angis.com',
     'thumbtack.com', 'angi.com', 'manta.com', 'mapquest.com',
-    'groupon.com', 'reddit.com', 'forbes.com', 'usnews.com'
+    'groupon.com', 'reddit.com', 'forbes.com', 'usnews.com',
+    'clutch.co', 'goodfirms.co', 'upcity.com', 'trustpilot.com',
+    'capterra.com', 'g2.com', 'bark.com', 'houzz.com', 'homeadvisor.com',
+    'zameen.com', 'olx.com.pk', 'olx.com', 'businesslist.pk', 'ebizpk.co',
+    'starofservice.pk', 'starofservice.com', 'graana.com', 'pakwheels.com',
+    'justdial.com', 'sulekha.com', 'indiamart.com', 'tradeindia.com',
+    'yellowpages.com.pk', 'dialpakistan.com', 'pakistanbusinessdirectory.com',
+    'checkatrade.com', 'gumtree.com', 'craigslist.org', 'crunchbase.com'
 ]
 
 class GoogleMapsScraper:
@@ -142,14 +149,21 @@ class GoogleMapsScraper:
     async def _scrape_via_duckduckgo(self, query: str, max_results: int) -> List[Dict]:
         results: List[Dict] = []
         headers = {
-            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+            "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+            "Referer": "https://duckduckgo.com/",
+            "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+            "Accept-Language": "en-US,en;q=0.5",
         }
         clean_query = f"{query} contact"
-        url = f"https://html.duckduckgo.com/html/?q={urllib.parse.quote(clean_query)}"
 
         async with httpx.AsyncClient(headers=headers, timeout=10.0, follow_redirects=True) as client:
             try:
-                resp = await client.get(url)
+                try:
+                    await client.get("https://duckduckgo.com/", timeout=4.0)
+                except Exception:
+                    pass
+
+                resp = await client.post("https://html.duckduckgo.com/html/", data={"q": clean_query})
                 if resp.status_code == 200:
                     soup = BeautifulSoup(resp.text, 'html.parser')
                     items = soup.find_all('div', class_='result')
@@ -169,7 +183,10 @@ class GoogleMapsScraper:
                         elif raw_link.startswith("http"):
                             target_url = raw_link
 
-                        if not target_url or any(agg in target_url.lower() for agg in AGGREGATOR_DOMAINS):
+                        url_lower = target_url.lower()
+                        if not target_url or any(agg in url_lower for agg in AGGREGATOR_DOMAINS):
+                            continue
+                        if any(pat in url_lower for pat in ['/top-10', '/top10', '/top-5', '/best-', '/directory/', '/categories/', '/agents/', '/agent/', '/cate/', '/find/']):
                             continue
 
                         snippet_el = it.find('a', class_='result__snippet')

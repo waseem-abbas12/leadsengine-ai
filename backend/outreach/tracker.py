@@ -28,6 +28,11 @@ def init_db():
     )
     """)
 
+    try:
+        cursor.execute("ALTER TABLE leads ADD COLUMN founder_role TEXT")
+    except Exception:
+        pass
+
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS email_logs (
         id TEXT PRIMARY KEY,
@@ -53,8 +58,8 @@ def save_lead(lead: Dict[str, Any], search_query: str = "") -> int:
     cursor.execute("""
     INSERT INTO leads (
         name, category, rating, reviews, phone, website,
-        email, email_status, founder_name, socials, ai_score, pitch_hook, search_query
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        email, email_status, founder_name, founder_role, socials, ai_score, pitch_hook, search_query
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         lead.get("name", ""),
         lead.get("category", ""),
@@ -65,6 +70,7 @@ def save_lead(lead: Dict[str, Any], search_query: str = "") -> int:
         lead.get("email", ""),
         lead.get("email_status", "UNKNOWN"),
         lead.get("founder_name", ""),
+        lead.get("founder_role", ""),
         json.dumps(lead.get("socials", {})),
         lead.get("ai_score", 50),
         lead.get("pitch_hook", ""),

@@ -46,8 +46,12 @@ class WebsiteHunter:
         socials = {"linkedin": "", "instagram": "", "facebook": "", "twitter": ""}
         for a in soup.find_all('a', href=True):
             href = a['href'].lower()
-            if "linkedin.com/company" in href or "linkedin.com/in" in href:
-                if not socials["linkedin"]: socials["linkedin"] = a['href']
+            if "linkedin.com/in/" in href:
+                # Personal decision maker profile takes top priority
+                socials["linkedin"] = a['href']
+            elif "linkedin.com/company/" in href:
+                if not socials["linkedin"]:
+                    socials["linkedin"] = a['href']
             elif "instagram.com/" in href and not any(x in href for x in ['/p/', '/explore/']):
                 if not socials["instagram"]: socials["instagram"] = a['href']
             elif "facebook.com/" in href and not any(x in href for x in ['sharer', 'dialog', '/photo']):
@@ -56,13 +60,24 @@ class WebsiteHunter:
                 if not socials["twitter"]: socials["twitter"] = a['href']
         return socials
 
-    def extract_founder(self, text: str) -> Optional[str]:
-        m = OWNER_REGEX.search(text)
+    def extract_founder_info(self, text: str):
+        # 1. "Role: Name" e.g. "CEO: Muhammad Ali", "Founder - John Doe"
+        m = re.search(r'(founder|ceo|owner|director|president|managing\s+director|broker|principal)\s*[:\-–]?\s*([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})', text, re.IGNORECASE)
         if m:
-            name = m.group(1).strip()
+            role = m.group(1).strip().upper() if len(m.group(1).strip()) <= 3 else m.group(1).strip().title()
+            name = m.group(2).strip()
+            if len(name.split()) in [2, 3] and not any(w in name.lower() for w in ['about', 'privacy', 'terms', 'contact', 'home', 'services']):
+                return name, role
+
+        # 2. "Name, Role" e.g. "Muhammad Saheem Faisal, CEO"
+        m2 = re.search(r'([A-Z][a-z]+(?:\s+[A-Z][a-z]+){1,2})\s*,\s*(founder|ceo|owner|director|president|managing\s+director|broker)', text, re.IGNORECASE)
+        if m2:
+            name = m2.group(1).strip()
+            role = m2.group(2).strip().upper() if len(m2.group(2).strip()) <= 3 else m2.group(2).strip().title()
             if len(name.split()) in [2, 3] and not any(w in name.lower() for w in ['about', 'privacy', 'terms', 'contact', 'home']):
-                return name
-        return None
+                return name, role
+
+        return None, None
 
     async def _fetch_page(self, client: httpx.AsyncClient, url: str) -> Optional[str]:
         try:
@@ -81,6 +96,7 @@ class WebsiteHunter:
             "phones": [],
             "socials": {"linkedin": "", "instagram": "", "facebook": "", "twitter": ""},
             "founder_name": "",
+            "founder_role": "",
             "title": "",
             "description": ""
         }
@@ -99,7 +115,7 @@ class WebsiteHunter:
         except Exception:
             return result
 
-        pages_to_visit = [website_url, urljoin(base_domain, "/contact"), urljoin(base_domain, "/about")]
+        pages_to_visit = [website_url, urljoin(base_domain, "/contact"), urljoin(base_domain, "/about"), urljoin(base_domain, "/team")]
         pages_to_visit = pages_to_visit[:self.max_pages]
 
         all_emails: Set[str] = set()
@@ -158,11 +174,12 @@ class WebsiteHunter:
                     if v and not result["socials"][k]:
                         result["socials"][k] = v
 
-                # 6. Founder name
+                # 6. Founder name & role
                 if not result["founder_name"]:
-                    f_name = self.extract_founder(page_text)
+                    f_name, f_role = self.extract_founder_info(page_text)
                     if f_name:
                         result["founder_name"] = f_name
+                        result["founder_role"] = f_role or "Executive"
 
         finally:
             if close_client:

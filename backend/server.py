@@ -14,6 +14,7 @@ from pydantic import BaseModel
 from backend.config import BASE_DIR, BASE_URL
 from backend.scrapers.gmaps_scraper import GoogleMapsScraper
 from backend.scrapers.website_hunter import WebsiteHunter
+from backend.scrapers.linkedin_hunter import LinkedInHunter
 from backend.scrapers.email_verifier import verify_email
 from backend.ai.enricher import AIEnricher
 from backend.outreach.tracker import (
@@ -50,10 +51,18 @@ except Exception:
 enricher = AIEnricher()
 hunter = WebsiteHunter()
 maps_scraper = GoogleMapsScraper(headless=True)
+linkedin_hunter = LinkedInHunter()
 
 class SearchRequest(BaseModel):
     prompt: str
+    mode: str = "hybrid"  # "hybrid", "linkedin", "maps"
+    role: Optional[str] = "CEO, Founder, Owner, Managing Director"
+    location: Optional[str] = ""
     max_results: int = 10
+    only_with_email: bool = False
+    only_with_phone: bool = False
+    only_with_linkedin: bool = False
+    min_score: int = 0
 
 class CampaignRequest(BaseModel):
     lead_ids: Optional[List[int]] = None
@@ -82,9 +91,44 @@ async def api_search(req: SearchRequest):
 
     parsed = await enricher.parse_prompt(req.prompt)
     search_query = parsed.get("query") or req.prompt
+    niche = parsed.get("niche") or req.prompt
+    location = req.location.strip() if req.location and req.location.strip() else (parsed.get("location") or "")
     service_to_pitch = parsed.get("service_to_pitch", "")
 
-    raw_leads = await maps_scraper.search_leads(search_query, max_results=req.max_results)
+    raw_leads = []
+
+    if req.mode == "linkedin":
+        raw_leads = await linkedin_hunter.find_decision_makers(
+            niche=niche,
+            location=location,
+            role=req.role or "CEO, Founder, Owner, Managing Director",
+            max_results=req.max_results
+        )
+    elif req.mode == "maps":
+        raw_leads = await maps_scraper.search_leads(search_query, max_results=req.max_results)
+    else:  # Hybrid: both Maps and LinkedIn
+        half = max(2, req.max_results // 2)
+        tasks = [
+            maps_scraper.search_leads(search_query, max_results=half),
+            linkedin_hunter.find_decision_makers(
+                niche=niche,
+                location=location,
+                role=req.role or "CEO, Founder, Owner, Managing Director",
+                max_results=half
+            )
+        ]
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        maps_res = results[0] if isinstance(results[0], list) else []
+        li_res = results[1] if isinstance(results[1], list) else []
+
+        raw_leads = []
+        for i in range(max(len(maps_res), len(li_res))):
+            if i < len(li_res): raw_leads.append(li_res[i])
+            if i < len(maps_res): raw_leads.append(maps_res[i])
+        raw_leads = raw_leads[:req.max_results]
+
+    if not raw_leads:
+        raw_leads = await maps_scraper._scrape_via_duckduckgo(search_query, max_results=req.max_results)
 
     async with httpx.AsyncClient(
         headers=hunter.headers,
@@ -92,7 +136,7 @@ async def api_search(req: SearchRequest):
         verify=False,
         timeout=hunter.timeout
     ) as client:
-        async def process_lead(item: dict) -> dict:
+        async def process_lead(item: dict) -> Optional[dict]:
             lead = {
                 "name": item.get("name", ""),
                 "category": item.get("category", ""),
@@ -100,39 +144,61 @@ async def api_search(req: SearchRequest):
                 "reviews": item.get("reviews", "0"),
                 "phone": item.get("phone", ""),
                 "website": item.get("website", ""),
-                "address": item.get("address", ""),
-                "email": "",
-                "email_status": "NONE",
-                "founder_name": "",
-                "socials": {"linkedin": "", "instagram": "", "facebook": "", "twitter": ""},
-                "ai_score": 30,
-                "pitch_hook": ""
+                "address": item.get("address", "") or location,
+                "email": item.get("email", ""),
+                "email_status": item.get("email_status", "NONE"),
+                "founder_name": item.get("founder_name", ""),
+                "founder_role": item.get("founder_role", ""),
+                "socials": item.get("socials", {"linkedin": "", "instagram": "", "facebook": "", "twitter": ""}),
+                "ai_score": item.get("ai_score", 40),
+                "pitch_hook": item.get("pitch_hook", ""),
+                "source": item.get("source", "Web Hunt")
             }
 
             website = lead["website"]
             if website and website.startswith("http") and "/aclk" not in website:
                 try:
                     crawl_data = await hunter.crawl_site(website, client=client)
-                    if crawl_data.get("primary_email"):
+                    if not lead["email"] and crawl_data.get("primary_email"):
                         lead["email"] = crawl_data["primary_email"]
                     if not lead["phone"] and crawl_data.get("phones"):
                         lead["phone"] = crawl_data["phones"][0]
-                    if crawl_data.get("founder_name"):
+                    if not lead["founder_name"] and crawl_data.get("founder_name"):
                         lead["founder_name"] = crawl_data["founder_name"]
                     if crawl_data.get("socials"):
-                        lead["socials"] = crawl_data["socials"]
+                        for k, v in crawl_data["socials"].items():
+                            if v and not lead["socials"].get(k):
+                                lead["socials"][k] = v
                 except Exception:
                     pass
 
-            if lead["email"]:
+            if lead["email"] and lead["email_status"] == "NONE":
                 try:
                     is_valid, status = verify_email(lead["email"])
                     lead["email_status"] = status
                 except Exception:
                     lead["email_status"] = "RISKY"
 
-            lead["ai_score"] = enricher.score_lead(lead)
-            lead["pitch_hook"] = enricher.generate_pitch_hook(lead, service_to_pitch)
+            # Dynamic AI scoring
+            base_score = enricher.score_lead(lead)
+            if lead["socials"].get("linkedin"):
+                base_score += 15
+            if lead.get("founder_role"):
+                base_score += 15
+            lead["ai_score"] = min(100, base_score)
+
+            if not lead["pitch_hook"]:
+                lead["pitch_hook"] = enricher.generate_pitch_hook(lead, service_to_pitch)
+
+            # Apply quality filters
+            if req.only_with_email and not lead["email"]:
+                return None
+            if req.only_with_phone and not lead["phone"]:
+                return None
+            if req.only_with_linkedin and not lead["socials"].get("linkedin"):
+                return None
+            if req.min_score > 0 and lead["ai_score"] < req.min_score:
+                return None
 
             try:
                 lead_id = save_lead(lead, search_query=search_query)
@@ -143,11 +209,13 @@ async def api_search(req: SearchRequest):
             return lead
 
         tasks = [process_lead(item) for item in raw_leads]
-        enriched_leads = await asyncio.gather(*tasks, return_exceptions=False)
+        processed = await asyncio.gather(*tasks, return_exceptions=False)
+        enriched_leads = [l for l in processed if l is not None]
 
     return {
         "status": "success",
         "query_used": search_query,
+        "mode_used": req.mode,
         "leads_count": len(enriched_leads),
         "leads": enriched_leads
     }
@@ -163,7 +231,9 @@ async def api_export(format: str = Query("csv", pattern="^(csv|xlsx)$")):
         soc = l.get("socials", {})
         export_rows.append({
             "Business Name": l.get("name"),
-            "Founder / Contact": l.get("founder_name"),
+            "Founder / Decision Maker": l.get("founder_name"),
+            "Role / Title": l.get("founder_role", ""),
+            "LinkedIn Profile": soc.get("linkedin", ""),
             "Category": l.get("category"),
             "Verified Email": l.get("email"),
             "Email Status": l.get("email_status"),
@@ -171,7 +241,6 @@ async def api_export(format: str = Query("csv", pattern="^(csv|xlsx)$")):
             "Website": l.get("website"),
             "Rating": l.get("rating"),
             "Review Count": l.get("reviews"),
-            "LinkedIn": soc.get("linkedin", ""),
             "Instagram": soc.get("instagram", ""),
             "Facebook": soc.get("facebook", ""),
             "AI Score": l.get("ai_score"),
