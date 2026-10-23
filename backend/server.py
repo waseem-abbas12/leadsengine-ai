@@ -203,16 +203,175 @@ async def api_parse_raw_text(req: ParseRawTextRequest):
         "leads": parsed_leads
     }
 
+MASTER_CSV_PATH = BASE_DIR / "Master_Leads_Database.csv"
+
+class GlobalScraperState:
+    is_running: bool = False
+    stop_event: Optional[asyncio.Event] = None
+    task: Optional[asyncio.Task] = None
+    logs: List[str] = []
+    session_leads: List[dict] = []
+    emails_found: int = 0
+    phones_found: int = 0
+    total_scraped: int = 0
+    query_used: str = ""
+
+hunt_state = GlobalScraperState()
+
+@app.post("/api/leads/start-hunt")
+async def start_hunt(req: SearchRequest):
+    if hunt_state.is_running:
+        return {"status": "already_running", "message": "A lead hunt is already active."}
+
+    user_prompt = req.prompt.strip()
+    loc_param = req.location.strip() if req.location and req.location.strip() else ""
+    if loc_param:
+        location = loc_param
+        niche = re.sub(rf'\s+in\s+{re.escape(loc_param)}', '', user_prompt, flags=re.IGNORECASE).strip()
+        search_query = f"{niche} in {location}" if location else niche
+    else:
+        parsed = await enricher.parse_prompt(user_prompt)
+        search_query = parsed.get("query") or user_prompt
+        niche = parsed.get("niche") or user_prompt
+        location = parsed.get("location") or ""
+
+    hunt_state.is_running = True
+    hunt_state.stop_event = asyncio.Event()
+    hunt_state.logs = []
+    hunt_state.session_leads = []
+    hunt_state.emails_found = 0
+    hunt_state.phones_found = 0
+    hunt_state.total_scraped = 0
+    hunt_state.query_used = search_query
+
+    def append_log(msg: str):
+        hunt_state.logs.append(msg)
+        if len(hunt_state.logs) > 500:
+            hunt_state.logs = hunt_state.logs[-500:]
+
+    def append_lead(lead_item: dict):
+        hunt_state.session_leads.append(lead_item)
+        hunt_state.total_scraped = len(hunt_state.session_leads)
+        if lead_item.get("phone"):
+            hunt_state.phones_found += 1
+        if lead_item.get("email"):
+            hunt_state.emails_found += 1
+        
+        # Save to database
+        try:
+            lead_id = save_lead(lead_item, search_query=search_query)
+            lead_item["id"] = lead_id
+        except Exception:
+            pass
+
+        # Save to Master_Leads_Database.csv on disk
+        try:
+            df = pd.DataFrame([lead_item])
+            if not os.path.exists(MASTER_CSV_PATH):
+                df.to_csv(MASTER_CSV_PATH, index=False, header=True, encoding="utf-8-sig")
+            else:
+                df.to_csv(MASTER_CSV_PATH, mode="a", index=False, header=False, encoding="utf-8-sig")
+        except Exception:
+            pass
+
+    async def background_hunter():
+        append_log(f"🚀 Lead Hunter Initialized: Target={req.max_results} leads | Niche='{niche}' | Location='{location}' | Mode={req.mode}")
+        try:
+            if req.mode == "maps":
+                await maps_scraper.search_leads(
+                    search_query,
+                    max_results=req.max_results,
+                    use_variations=req.use_variations,
+                    on_log=append_log,
+                    on_lead=append_lead,
+                    stop_event=hunt_state.stop_event
+                )
+            elif req.mode == "linkedin":
+                li_leads = await linkedin_hunter.find_decision_makers(
+                    niche=niche,
+                    location=location,
+                    role=req.role or "CEO, Founder, Owner, Managing Director",
+                    seniority=req.seniority,
+                    max_results=req.max_results
+                )
+                for l in li_leads:
+                    append_lead(l)
+                    append_log(f"🎯 [LinkedIn] Found {l.get('founder_name')} ({l.get('founder_role')}) at {l.get('name')}")
+            else: # Hybrid
+                append_log("⚡ Running Hybrid Sweep: Google Maps + LinkedIn Decision Makers simultaneously...")
+                maps_task = maps_scraper.search_leads(
+                    search_query,
+                    max_results=req.max_results,
+                    use_variations=req.use_variations,
+                    on_log=append_log,
+                    on_lead=append_lead,
+                    stop_event=hunt_state.stop_event
+                )
+                li_task = linkedin_hunter.find_decision_makers(
+                    niche=niche,
+                    location=location,
+                    role=req.role or "CEO, Founder, Owner, Managing Director",
+                    seniority=req.seniority,
+                    max_results=max(10, req.max_results // 3)
+                )
+                res_maps, res_li = await asyncio.gather(maps_task, li_task, return_exceptions=True)
+                if isinstance(res_li, list):
+                    for l in res_li:
+                        append_lead(l)
+                        append_log(f"🎯 [LinkedIn] Found {l.get('founder_name')} at {l.get('name')}")
+            
+            append_log(f"✅ Scraping completed! Total {hunt_state.total_scraped} leads with {hunt_state.phones_found} verified phone numbers.")
+        except Exception as err:
+            append_log(f"💥 Scraping notice: {str(err)}")
+        finally:
+            hunt_state.is_running = False
+
+    hunt_state.task = asyncio.create_task(background_hunter())
+    return {
+        "status": "started",
+        "message": "Lead hunting process started in background.",
+        "query": search_query
+    }
+
+@app.get("/api/leads/hunt-status")
+async def hunt_status(last_log_idx: int = 0):
+    return {
+        "is_running": hunt_state.is_running,
+        "total_scraped": hunt_state.total_scraped,
+        "phones_found": hunt_state.phones_found,
+        "emails_found": hunt_state.emails_found,
+        "query_used": hunt_state.query_used,
+        "logs": hunt_state.logs[last_log_idx:],
+        "total_logs": len(hunt_state.logs),
+        "leads": hunt_state.session_leads
+    }
+
+@app.post("/api/leads/stop-hunt")
+async def stop_hunt():
+    if hunt_state.is_running and hunt_state.stop_event:
+        hunt_state.stop_event.set()
+        hunt_state.logs.append("🛑 Abort signal triggered by user.")
+        return {"status": "stopping", "message": "Stop signal sent."}
+    return {"status": "idle", "message": "No active hunt is running."}
+
 @app.post("/api/leads/search")
 async def api_search(req: SearchRequest):
     if not req.prompt.strip():
         raise HTTPException(status_code=400, detail="Prompt is required")
 
-    parsed = await enricher.parse_prompt(req.prompt)
-    search_query = parsed.get("query") or req.prompt
-    niche = parsed.get("niche") or req.prompt
-    location = req.location.strip() if req.location and req.location.strip() else (parsed.get("location") or "")
-    service_to_pitch = parsed.get("service_to_pitch", "")
+    user_prompt = req.prompt.strip()
+    loc_param = req.location.strip() if req.location and req.location.strip() else ""
+    if loc_param:
+        location = loc_param
+        niche = re.sub(rf'\s+in\s+{re.escape(loc_param)}', '', user_prompt, flags=re.IGNORECASE).strip()
+        search_query = f"{niche} in {location}" if location else niche
+    else:
+        parsed = await enricher.parse_prompt(user_prompt)
+        search_query = parsed.get("query") or user_prompt
+        niche = parsed.get("niche") or user_prompt
+        location = parsed.get("location") or ""
+
+    service_to_pitch = parsed.get("service_to_pitch", "") if 'parsed' in locals() else "Sales Automation"
 
     raw_leads = []
 

@@ -243,6 +243,40 @@
       </div>
     </div>
 
+    <!-- Live Scraping Terminal & Progress Console (Desktop Scraper Style) -->
+    <div id="liveTerminalPanel" class="hidden rounded-xl border border-emerald-500/30 bg-slate-950 p-5 shadow-2xl space-y-4">
+      <div class="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-slate-800 pb-3">
+        <div class="flex items-center gap-2.5">
+          <span class="w-2.5 h-2.5 rounded-full bg-emerald-400 animate-ping"></span>
+          <span class="font-mono text-sm font-bold text-white flex items-center gap-2">
+            <i class="fa-solid fa-terminal text-emerald-400"></i>
+            <span>Live Scraper Execution Engine</span>
+          </span>
+          <span id="activeQueryBadge" class="text-xs px-2.5 py-0.5 rounded-full bg-slate-800 text-slate-300 font-mono">Sweeping...</span>
+        </div>
+        <div class="flex items-center gap-3">
+          <div class="flex items-center gap-2 text-xs font-mono">
+            <span class="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300">
+              Leads: <strong id="liveLeadCount" class="text-white">0</strong>
+            </span>
+            <span class="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300">
+              Phones: <strong id="livePhoneCount" class="text-emerald-400">0</strong>
+            </span>
+            <span class="px-2 py-1 rounded bg-slate-800 border border-slate-700 text-slate-300">
+              Emails: <strong id="liveEmailCount" class="text-purple-400">0</strong>
+            </span>
+          </div>
+          <button onclick="stopHunting()" class="px-3 py-1 rounded-lg bg-red-500/20 hover:bg-red-500/30 text-red-400 border border-red-500/30 text-xs font-bold transition flex items-center gap-1.5">
+            <i class="fa-solid fa-stop text-[10px]"></i> Stop Hunting
+          </button>
+        </div>
+      </div>
+      <!-- Terminal Window -->
+      <div id="terminalLogBox" class="h-44 overflow-y-auto custom-scroll bg-black/90 rounded-lg p-3.5 font-mono text-xs text-emerald-400 space-y-1 border border-slate-900 shadow-inner">
+        <div>🚀 Ready to launch multi-area sweep. Press Start Hunting above.</div>
+      </div>
+    </div>
+
     <!-- Leads Table & Results -->
     <div class="rounded-xl border border-brand-border bg-brand-cardBg overflow-hidden">
       <!-- Table Header & Actions -->
@@ -1023,6 +1057,25 @@ Sales Engine Team</textarea>
       }
     }
 
+    let huntPollInterval = null;
+    let lastLogIndex = 0;
+
+    async function stopHunting() {
+      try {
+        await fetch('/api/leads/stop-hunt', { method: 'POST' });
+        const term = document.getElementById('terminalLogBox');
+        if (term) {
+          const line = document.createElement('div');
+          line.className = 'text-yellow-400 font-bold';
+          line.textContent = '🛑 Stop signal requested by user...';
+          term.appendChild(line);
+          term.scrollTop = term.scrollHeight;
+        }
+      } catch (e) {
+        console.error(e);
+      }
+    }
+
     async function startEngine() {
       const input = document.getElementById('promptInput');
       const prompt = input.value.trim();
@@ -1034,24 +1087,28 @@ Sales Engine Team</textarea>
       const role = document.getElementById('roleInput').value.trim();
       const seniority = document.getElementById('seniorityInput').value;
       const location = document.getElementById('locationInput').value.trim();
-      const limit = parseInt(document.getElementById('limitInput').value) || 10;
+      const limit = parseInt(document.getElementById('limitInput').value) || 50;
       const mustEmail = document.getElementById('filterMustEmail').checked;
       const mustPhone = document.getElementById('filterMustPhone').checked;
       const mustLinkedIn = document.getElementById('filterMustLinkedIn').checked;
-
-      const startBtn = document.getElementById('startBtn');
-      const loadingState = document.getElementById('loadingState');
-      const tableContainer = document.getElementById('tableContainer');
-
-      startBtn.disabled = true;
-      startBtn.innerHTML = `<i class="fa-solid fa-spinner animate-spin"></i> Hunting...`;
-      loadingState.classList.remove('hidden');
-      tableContainer.classList.add('opacity-40');
-
       const useVariations = document.getElementById('toggleVariations').checked;
 
+      const startBtn = document.getElementById('startBtn');
+      const terminalPanel = document.getElementById('liveTerminalPanel');
+      const terminalBox = document.getElementById('terminalLogBox');
+      const activeQueryBadge = document.getElementById('activeQueryBadge');
+
+      startBtn.disabled = true;
+      startBtn.innerHTML = `<i class="fa-solid fa-spinner animate-spin"></i> Hunting Active...`;
+
+      // Show terminal
+      terminalPanel.classList.remove('hidden');
+      terminalBox.innerHTML = '<div class="text-emerald-400">🚀 Initializing Lead Hunter...</div>';
+      lastLogIndex = 0;
+
       try {
-        const res = await fetch('/api/leads/search', {
+        // Trigger background hunt
+        const res = await fetch('/api/leads/start-hunt', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
@@ -1067,20 +1124,69 @@ Sales Engine Team</textarea>
             only_with_linkedin: mustLinkedIn
           })
         });
-        const data = await res.json();
-        if (data.status === 'success') {
-          await loadLeads();
-          await loadStats();
-        } else {
-          alert('Scraping completed with notes: ' + (data.detail || 'Done'));
+        const initData = await res.json();
+        if (initData.query) {
+          activeQueryBadge.innerText = initData.query;
         }
+
+        // Start real-time polling loop
+        if (huntPollInterval) clearInterval(huntPollInterval);
+
+        huntPollInterval = setInterval(async () => {
+          try {
+            const stRes = await fetch(`/api/leads/hunt-status?last_log_idx=${lastLogIndex}`);
+            const stData = await stRes.json();
+
+            // Append new logs
+            if (stData.logs && stData.logs.length > 0) {
+              stData.logs.forEach(msg => {
+                const line = document.createElement('div');
+                if (msg.includes('📞') || msg.includes('Found')) {
+                  line.className = 'text-emerald-300 font-semibold';
+                } else if (msg.includes('🛑') || msg.includes('Error') || msg.includes('notice')) {
+                  line.className = 'text-yellow-400';
+                } else if (msg.includes('🔍')) {
+                  line.className = 'text-cyan-300';
+                } else {
+                  line.className = 'text-gray-300';
+                }
+                line.textContent = msg;
+                terminalBox.appendChild(line);
+              });
+              terminalBox.scrollTop = terminalBox.scrollHeight;
+              lastLogIndex = stData.total_logs;
+            }
+
+            // Update live counters
+            document.getElementById('liveLeadCount').innerText = stData.total_scraped || 0;
+            document.getElementById('livePhoneCount').innerText = stData.phones_found || 0;
+            document.getElementById('liveEmailCount').innerText = stData.emails_found || 0;
+
+            // Update table live with incoming session leads
+            if (stData.leads && stData.leads.length > 0) {
+              allFetchedLeads = stData.leads;
+              applyFilter(currentFilter);
+            }
+
+            // Check if finished
+            if (!stData.is_running) {
+              clearInterval(huntPollInterval);
+              huntPollInterval = null;
+              startBtn.disabled = false;
+              startBtn.innerHTML = `<span>Start Hunting</span> <i class="fa-solid fa-arrow-right"></i>`;
+              activeQueryBadge.innerText = 'Completed';
+              await loadLeads();
+              await loadStats();
+            }
+          } catch (pollErr) {
+            console.error('Polling notice:', pollErr);
+          }
+        }, 800);
+
       } catch (err) {
-        alert('Error scraping leads: ' + err.message);
-      } finally {
+        alert('Error starting scraper: ' + err.message);
         startBtn.disabled = false;
         startBtn.innerHTML = `<span>Start Hunting</span> <i class="fa-solid fa-arrow-right"></i>`;
-        loadingState.classList.add('hidden');
-        tableContainer.classList.remove('opacity-40');
       }
     }
 

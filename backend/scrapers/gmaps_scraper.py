@@ -141,12 +141,22 @@ class GoogleMapsScraper:
     def __init__(self, headless: bool = True):
         self.headless = headless
 
-    async def _scrape_multi_queries_playwright(self, queries: List[str], max_results: int) -> List[Dict]:
+    async def _scrape_multi_queries_playwright(
+        self,
+        queries: List[str],
+        max_results: int,
+        on_log: Optional[Callable[[str], None]] = None,
+        on_lead: Optional[Callable[[Dict], None]] = None,
+        stop_event: Optional[asyncio.Event] = None
+    ) -> List[Dict]:
         if not async_playwright:
             return []
 
         all_results: List[Dict] = []
         seen_keys: Set[str] = set()
+
+        if on_log:
+            on_log(f"🚀 Initialized Playwright Chromium Engine across {len(queries)} search variations (Target: {max_results} leads)...")
 
         async with async_playwright() as p:
             browser = await p.chromium.launch(
@@ -163,11 +173,17 @@ class GoogleMapsScraper:
                 for q_idx, q in enumerate(queries, 1):
                     if len(all_results) >= max_results:
                         break
+                    if stop_event and stop_event.is_set():
+                        if on_log: on_log("🛑 Stop signal triggered by user.")
+                        break
+
+                    if on_log:
+                        on_log(f"🔍 Query [{q_idx}/{len(queries)}]: '{q}' (Collected: {len(all_results)}/{max_results})")
 
                     search_url = f"https://www.google.com/maps/search/{urllib.parse.quote(q)}"
                     try:
                         await page.goto(search_url, wait_until="commit", timeout=18000)
-                        await asyncio.sleep(2.0)
+                        await asyncio.sleep(1.8)
 
                         # Handle consent buttons once
                         if q_idx == 1:
@@ -262,7 +278,7 @@ class GoogleMapsScraper:
                                         website = h
                                         break
 
-                                all_results.append({
+                                item_dict = {
                                     "name": name,
                                     "category": cat,
                                     "rating": rating,
@@ -272,7 +288,16 @@ class GoogleMapsScraper:
                                     "address": address,
                                     "source": "Google Maps",
                                     "matched_query": q
-                                })
+                                }
+                                all_results.append(item_dict)
+                                if on_lead:
+                                    try:
+                                        on_lead(item_dict)
+                                    except Exception:
+                                        pass
+                                if on_log:
+                                    phone_display = f"📞 {phone}" if phone else "No Phone"
+                                    on_log(f"[{len(all_results)}/{max_results}] Found: {name[:32]} | {phone_display}")
                             except Exception:
                                 continue
 
@@ -355,7 +380,9 @@ class GoogleMapsScraper:
         query: str,
         max_results: int = 50,
         use_variations: bool = True,
-        on_progress: Optional[Callable[[Dict], None]] = None
+        on_log: Optional[Callable[[str], None]] = None,
+        on_lead: Optional[Callable[[Dict], None]] = None,
+        stop_event: Optional[asyncio.Event] = None
     ) -> List[Dict]:
         """
         Main Search Gateway:
@@ -374,11 +401,17 @@ class GoogleMapsScraper:
 
         if async_playwright:
             try:
-                leads = await self._scrape_multi_queries_playwright(queries, max_results)
-                if leads and len(leads) >= 2:
+                leads = await self._scrape_multi_queries_playwright(
+                    queries,
+                    max_results,
+                    on_log=on_log,
+                    on_lead=on_lead,
+                    stop_event=stop_event
+                )
+                if leads and len(leads) >= 1:
                     return leads
-            except Exception:
-                pass
+            except Exception as e:
+                if on_log: on_log(f"⚠️ Playwright run notice: {str(e)}")
 
         # Fallback if Playwright not available
         all_fallback: List[Dict] = []
